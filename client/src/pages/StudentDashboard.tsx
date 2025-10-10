@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,78 +13,74 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useUser } from "@/contexts/UserContext";
+import { useQuery } from "@tanstack/react-query";
 
-// Mock user data - will be replaced with actual authentication
-const mockStudent = {
-  id: "1",
-  firstName: "Sarah",
-  lastName: "Johnson",
-  email: "sarah.johnson@ollc.edu",
-  role: "student" as const,
-};
-
-// Mock enrolled courses data
-const mockEnrolledCourses = [
-  {
-    id: "bsit-y2",
-    code: "BSIT",
-    title: "Y2",
-    instructor: "Dr. Maria Martinez",
-    progress: 75,
-    currentGrade: 88,
-    nextDue: "3 days",
-    isActive: true
-  },
-  {
-    id: "discrete-structures",
-    code: "Discrete Structures",
-    title: "SY23-24 Y2B",
-    instructor: "Dr. John Smith",
-    progress: 60,
-    currentGrade: 92,
-    nextDue: "1 week",
-    isActive: false
-  },
-  {
-    id: "lite-bsit",
-    code: "LITE BSIT Y2-B",
-    title: "",
-    instructor: "Dr. Sarah Johnson",
-    progress: 45,
-    currentGrade: 85,
-    nextDue: "5 days",
-    isActive: false
-  },
-  {
-    id: "bsit-1b",
-    code: "BSIT 1B (10:30 AM-1:30 PM)",
-    title: "Art Appreciation",
-    instructor: "Dr. Alex Chen",
-    progress: 30,
-    currentGrade: 78,
-    nextDue: "2 days",
-    isActive: false
-  },
-  {
-    id: "ethics-bsit",
-    code: "ETHICS || BSIT @OLLC",
-    title: "SECT B",
-    instructor: "Dr. Lisa Wang",
-    progress: 55,
-    currentGrade: 90,
-    nextDue: "4 days",
-    isActive: false
-  }
-];
+// Real user data is now fetched from the database via UserContext
 
 export default function StudentDashboard() {
   const [, setLocation] = useLocation();
   const { user, logout } = useUser();
   const [selectedTab, setSelectedTab] = useState<'overview' | 'courses' | 'grades' | 'settings'>('overview');
+
+  // Fetch enrolled courses from database
+  const { data: enrolledCourses = [], isLoading: coursesLoading } = useQuery({
+    queryKey: ['enrolled-courses', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      const response = await fetch(`/api/students/${user.id}/courses`);
+      if (!response.ok) throw new Error('Failed to fetch enrolled courses');
+      return response.json();
+    },
+    enabled: !!user?.id,
+  });
+
+  // Fetch student grades from database
+  const { data: studentGrades = [], isLoading: gradesLoading } = useQuery({
+    queryKey: ['student-grades', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
+      const response = await fetch(`/api/students/${user.id}/grades`);
+      if (!response.ok) throw new Error('Failed to fetch student grades');
+      return response.json();
+    },
+    enabled: !!user?.id,
+  });
+
+  // Fetch assignments due
+  const { data: assignmentsDueData = { assignmentsDue: 0 }, isLoading: assignmentsDueLoading } = useQuery({
+    queryKey: ['assignments-due', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return { assignmentsDue: 0 };
+      const response = await fetch(`/api/students/${user.id}/assignments-due`);
+      if (!response.ok) throw new Error('Failed to fetch assignments due');
+      return response.json();
+    },
+    enabled: !!user?.id,
+  });
+
+  // Fetch study statistics
+  const { data: studyStats = {
+    assignmentsCompleted: 0,
+    quizzesTaken: 0,
+    totalStudyHours: 0,
+    currentStreak: 0
+  }, isLoading: studyStatsLoading } = useQuery({
+    queryKey: ['study-statistics', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return {
+        assignmentsCompleted: 0,
+        quizzesTaken: 0,
+        totalStudyHours: 0,
+        currentStreak: 0
+      };
+      const response = await fetch(`/api/students/${user.id}/study-statistics`);
+      if (!response.ok) throw new Error('Failed to fetch study statistics');
+      return response.json();
+    },
+    enabled: !!user?.id,
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isCoursesExpanded, setIsCoursesExpanded] = useState(true);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState("");
   const [chatMessages, setChatMessages] = useState([
     { id: 1, sender: "Dr. Martinez", message: "Welcome to the course chat! Feel free to ask any questions.", timestamp: "2:30 PM", isInstructor: true },
@@ -197,7 +193,7 @@ export default function StudentDashboard() {
             <BookOpen className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{mockEnrolledCourses.length}</div>
+            <div className="text-2xl font-bold">{enrolledCourses.length}</div>
             <p className="text-xs text-muted-foreground">
               Currently enrolled
             </p>
@@ -210,10 +206,18 @@ export default function StudentDashboard() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">2</div>
-            <p className="text-xs text-muted-foreground">
-              This week
-            </p>
+            {assignmentsDueLoading ? (
+              <div className="flex items-center justify-center">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{assignmentsDueData.assignmentsDue}</div>
+                <p className="text-xs text-muted-foreground">
+                  This week
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -229,16 +233,16 @@ export default function StudentDashboard() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {mockEnrolledCourses.map((course) => (
+                {enrolledCourses.map((course) => (
                   <div key={course.id} className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-medium">{course.code}</span>
-                      <span className="text-sm text-muted-foreground">{course.progress}%</span>
+                      <span className="text-sm text-muted-foreground">0%</span>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div 
                         className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                        style={{ width: `${course.progress}%` }}
+                        style={{ width: `0%` }}
                       ></div>
                     </div>
                   </div>
@@ -252,24 +256,33 @@ export default function StudentDashboard() {
               <CardDescription>Your learning patterns and achievements</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div className="flex justify-between">
-                  <span>Total Study Hours</span>
-                  <span className="font-medium">127 hours</span>
+              {studyStatsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                    <p className="text-sm text-muted-foreground">Loading statistics...</p>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Assignments Completed</span>
-                  <span className="font-medium">24</span>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex justify-between">
+                    <span>Total Study Hours</span>
+                    <span className="font-medium">{studyStats.totalStudyHours} hours</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Assignments Completed</span>
+                    <span className="font-medium">{studyStats.assignmentsCompleted}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Quizzes Taken</span>
+                    <span className="font-medium">{studyStats.quizzesTaken}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Current Streak</span>
+                    <span className="font-medium">{studyStats.currentStreak} days</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Quizzes Taken</span>
-                  <span className="font-medium">18</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Current Streak</span>
-                  <span className="font-medium">12 days</span>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -282,11 +295,11 @@ export default function StudentDashboard() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">My Courses</h1>
-        <Badge variant="outline">{mockEnrolledCourses.length} courses</Badge>
+        <Badge variant="outline">{enrolledCourses.length} courses</Badge>
       </div>
       
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {mockEnrolledCourses.map((course, index) => (
+        {enrolledCourses.map((course, index) => (
           <Card 
             key={course.id}
             className="cursor-pointer hover:shadow-md transition-shadow"
@@ -311,19 +324,19 @@ export default function StudentDashboard() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">
-                {course.instructor}
+                {course.instructor?.firstName} {course.instructor?.lastName}
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span>Progress</span>
-                  <span>{course.progress}%</span>
+                  <span>0%</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
-                    style={{ width: `${course.progress}%` }}
+                    style={{ width: `0%` }}
                   ></div>
                 </div>
               </div>
@@ -331,11 +344,11 @@ export default function StudentDashboard() {
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div className="flex items-center space-x-2">
                   <Award className="h-4 w-4 text-muted-foreground" />
-                  <span>Grade: {course.currentGrade}%</span>
+                  <span>Grade: N/A</span>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Clock className="h-4 w-4 text-muted-foreground" />
-                  <span>Due: {course.nextDue}</span>
+                  <span>Section: {course.section}</span>
                 </div>
               </div>
 
@@ -352,7 +365,7 @@ export default function StudentDashboard() {
         ))}
       </div>
 
-      {mockEnrolledCourses.length === 0 && (
+      {enrolledCourses.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <BookOpen className="h-12 w-12 text-muted-foreground mb-4" />
@@ -447,44 +460,53 @@ export default function StudentDashboard() {
           Export Transcript
         </Button>
       </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+
+      {gradesLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading grades...</p>
+          </div>
+        </div>
+      ) : studentGrades.length === 0 ? (
         <Card>
-          <CardHeader>
-            <CardTitle>CS101 - Introduction to Computer Science</CardTitle>
-            <CardDescription>Dr. Maria Martinez</CardDescription>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="flex items-center justify-center py-8">
             <div className="text-center">
-              <div className="text-3xl font-bold text-green-600">88%</div>
-              <p className="text-sm text-muted-foreground">Current Grade</p>
+              <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Grades Available</h3>
+              <p className="text-muted-foreground">
+                Your grades will appear here once your instructors have graded your assignments.
+              </p>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>CS201 - Data Structures and Algorithms</CardTitle>
-            <CardDescription>Dr. John Smith</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-blue-600">92%</div>
-              <p className="text-sm text-muted-foreground">Current Grade</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>CS301 - Web Development</CardTitle>
-            <CardDescription>Dr. Sarah Johnson</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-purple-600">85%</div>
-              <p className="text-sm text-muted-foreground">Current Grade</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {studentGrades.map((grade: any, index: number) => {
+            const colors = ['text-green-600', 'text-blue-600', 'text-purple-600', 'text-orange-600', 'text-red-600'];
+            const colorClass = colors[index % colors.length];
+            
+            return (
+              <Card key={grade.id}>
+                <CardHeader>
+                  <CardTitle>{grade.course?.code} - {grade.course?.title}</CardTitle>
+                  <CardDescription>
+                    {grade.course?.instructor?.firstName} {grade.course?.instructor?.lastName}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center">
+                    <div className={`text-3xl font-bold ${colorClass}`}>
+                      {grade.grade || 'N/A'}%
+                    </div>
+                    <p className="text-sm text-muted-foreground">Current Grade</p>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 
@@ -593,166 +615,7 @@ export default function StudentDashboard() {
           </CardContent>
         </Card>
 
-        {/* Notification Preferences */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Bell className="h-5 w-5 mr-2" />
-              Notification Preferences
-            </CardTitle>
-            <CardDescription>
-              Choose how you want to be notified about course activities
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Email Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <Mail className="h-4 w-4 mr-2" />
-                Email Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailAssignments">Assignment Reminders</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified about upcoming assignment deadlines</p>
-                  </div>
-                  <Switch
-                    id="emailAssignments"
-                    checked={true}
-                    onCheckedChange={(checked) => {/* Handle change */}}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailGrades">Grade Notifications</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified when grades are posted</p>
-                  </div>
-                  <Switch
-                    id="emailGrades"
-                    checked={true}
-                    onCheckedChange={(checked) => {/* Handle change */}}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailAnnouncements">Course Announcements</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified about course announcements</p>
-                  </div>
-                  <Switch
-                    id="emailAnnouncements"
-                    checked={true}
-                    onCheckedChange={(checked) => {/* Handle change */}}
-                  />
-                </div>
-              </div>
-            </div>
 
-            <Separator />
-
-            {/* Push Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Push Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="pushNotifications">Push Notifications</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Receive push notifications on your device</p>
-                  </div>
-                  <Switch
-                    id="pushNotifications"
-                    checked={true}
-                    onCheckedChange={(checked) => {/* Handle change */}}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Digest Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <Calendar className="h-4 w-4 mr-2" />
-                Digest Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="weeklyDigest">Weekly Summary</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Weekly summary of course activities</p>
-                  </div>
-                  <Switch
-                    id="weeklyDigest"
-                    checked={false}
-                    onCheckedChange={(checked) => {/* Handle change */}}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Button onClick={() => {/* Handle save notifications */}}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Notification Preferences
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Privacy Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Shield className="h-5 w-5 mr-2" />
-              Privacy Settings
-            </CardTitle>
-            <CardDescription>
-              Control your privacy and visibility
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="profileVisible">Profile Visibility</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Make your profile visible to classmates</p>
-              </div>
-              <Switch
-                id="profileVisible"
-                checked={true}
-                onCheckedChange={(checked) => {/* Handle change */}}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="showEmail">Show Email Address</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Display your email on your profile</p>
-              </div>
-              <Switch
-                id="showEmail"
-                checked={false}
-                onCheckedChange={(checked) => {/* Handle change */}}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="allowMessages">Allow Messages</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Allow classmates to message you</p>
-              </div>
-              <Switch
-                id="allowMessages"
-                checked={true}
-                onCheckedChange={(checked) => {/* Handle change */}}
-              />
-            </div>
-
-            <Button onClick={() => {/* Handle save privacy */}}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Privacy Settings
-            </Button>
-          </CardContent>
-        </Card>
 
         {/* Account Security */}
         <Card>
@@ -792,29 +655,6 @@ export default function StudentDashboard() {
             <span className="font-bold text-xl text-blue-600 dark:text-blue-400">CHECKmate</span>
           </div>
           <div className="ml-auto flex items-center space-x-2">
-            <div className="relative">
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setIsNotificationsOpen(true)}
-                data-testid="button-notifications"
-              >
-                <Bell className="h-5 w-5" />
-              </Button>
-              {notifications.filter(n => !n.isRead).length > 0 && (
-                <span className="absolute -top-2 -right-2 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium z-10">
-                  {notifications.filter(n => !n.isRead).length}
-                </span>
-              )}
-            </div>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={() => setIsChatOpen(true)}
-              data-testid="button-chat"
-            >
-              <MessageSquare className="h-5 w-5" />
-            </Button>
             <ThemeToggle />
           </div>
         </div>
@@ -898,7 +738,7 @@ export default function StudentDashboard() {
             </Button>
             {!isSidebarCollapsed && isCoursesExpanded && (
               <div className="space-y-1 ml-6">
-                {mockEnrolledCourses.map((course, index) => (
+                {enrolledCourses.map((course, index) => (
                   <Button
                     key={course.id}
                     variant="ghost"
@@ -978,149 +818,7 @@ export default function StudentDashboard() {
         </main>
       </div>
 
-      {/* Notifications Popover */}
-      <Popover open={isNotificationsOpen} onOpenChange={setIsNotificationsOpen}>
-        <PopoverContent className="w-80 p-0" align="end">
-          <div className="p-4 border-b">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold text-lg flex items-center">
-                  <Bell className="h-5 w-5 mr-2" />
-                  Notifications
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Stay updated with your course activities
-                </p>
-              </div>
-              {notifications.some(n => !n.isRead) && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={markAllAsRead}
-                  className="text-xs"
-                >
-                  Mark all read
-                </Button>
-              )}
-            </div>
-          </div>
-          <div className="max-h-96 overflow-y-auto">
-            {notifications.length === 0 ? (
-              <div className="p-4 text-center text-muted-foreground">
-                No notifications
-              </div>
-            ) : (
-              notifications.map((notification) => (
-                <div 
-                  key={notification.id} 
-                  className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
-                    notification.isRead 
-                      ? 'bg-background' 
-                      : 'bg-blue-50 dark:bg-blue-900/20'
-                  }`}
-                  onClick={() => markNotificationAsRead(notification.id)}
-                >
-                  <div className="flex items-start space-x-3">
-                    <div className="flex-shrink-0">
-                      {notification.type === 'info' && (
-                        <CheckCircle className="h-5 w-5 text-blue-500" />
-                      )}
-                      {notification.type === 'warning' && (
-                        <AlertTriangle className="h-5 w-5 text-yellow-500" />
-                      )}
-                      {notification.type === 'success' && (
-                        <CheckCircle2 className="h-5 w-5 text-green-500" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium">{notification.title}</p>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs text-muted-foreground">{notification.timestamp}</span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteNotification(notification.id);
-                            }}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">{notification.message}</p>
-                      {!notification.isRead && (
-                        <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 mt-2">
-                          New
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
 
-      {/* Chat Modal */}
-      <Dialog open={isChatOpen} onOpenChange={setIsChatOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Course Chat</DialogTitle>
-            <DialogDescription>
-              Chat with your classmates and instructors
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col h-96">
-            {/* Chat Messages */}
-            <div className="flex-1 border rounded-lg p-4 bg-gray-50 dark:bg-gray-900 overflow-y-auto space-y-3">
-              {chatMessages.map((message) => (
-                <div 
-                  key={message.id} 
-                  className={`flex ${message.isInstructor ? 'justify-start' : 'justify-end'}`}
-                >
-                  <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                    message.isInstructor 
-                      ? 'bg-blue-100 dark:bg-blue-900 text-gray-900 dark:text-gray-100' 
-                      : 'bg-blue-600 text-white'
-                  }`}>
-                    <div className="flex items-center space-x-2 mb-1">
-                      <span className={`text-xs font-medium ${
-                        message.isInstructor ? 'text-blue-600 dark:text-blue-400' : 'text-blue-100'
-                      }`}>
-                        {message.sender}
-                      </span>
-                      <span className={`text-xs ${
-                        message.isInstructor ? 'text-gray-500 dark:text-gray-400' : 'text-blue-200'
-                      }`}>
-                        {message.timestamp}
-                      </span>
-                    </div>
-                    <p className="text-sm">{message.message}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            {/* Chat Input */}
-            <div className="mt-4 flex space-x-2">
-              <Input
-                value={chatMessage}
-                onChange={(e) => setChatMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Type your message..."
-                className="flex-1"
-              />
-              <Button onClick={sendMessage} disabled={!chatMessage.trim()}>
-                <MessageSquare className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

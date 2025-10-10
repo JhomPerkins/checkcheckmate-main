@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useUser } from "@/contexts/UserContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -48,14 +48,7 @@ interface Submission {
   [key: string]: any;
 }
 
-// Mock user data - will be replaced with actual authentication
-const mockInstructor = {
-  id: "1",
-  firstName: "Dr. Maria",
-  lastName: "Martinez",
-  email: "maria.martinez@ollc.edu",
-  role: "instructor" as const,
-};
+// Real user data is now fetched from the database via UserContext
 
 // Assignment schema for form validation
 const assignmentSchema = z.object({
@@ -101,16 +94,13 @@ export default function InstructorDashboard() {
   const [plagiarismResults, setPlagiarismResults] = useState<any>(null);
   const [autoGradingResults, setAutoGradingResults] = useState<any>(null);
   
-  // Chat functionality state
-  const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessage, setChatMessage] = useState("");
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([
     { id: 1, sender: "Dr. Martinez", message: "Welcome to the instructor chat! Feel free to ask any questions.", timestamp: "2:30 PM" },
     { id: 2, sender: "System", message: "AI grading is now available for all assignments.", timestamp: "2:32 PM" },
   ]);
 
-  // Notification functionality state
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState([
     { id: "1", title: "New Assignment Submission", message: "Sarah Johnson submitted 'Essay on AI Ethics'", timestamp: "2:30 PM", isRead: false, type: "info" },
     { id: "2", title: "Grade Reminder", message: "3 assignments pending review in CS101", timestamp: "1:45 PM", isRead: false, type: "warning" },
@@ -141,9 +131,9 @@ export default function InstructorDashboard() {
 
   // Settings state
   const [profileSettings, setProfileSettings] = useState({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
-    email: user?.email || '',
+    firstName: '',
+    lastName: '',
+    email: '',
     department: "Computer Science",
     title: "Associate Professor",
     bio: "Passionate educator with expertise in AI and machine learning. Committed to fostering student success through innovative teaching methods.",
@@ -151,23 +141,19 @@ export default function InstructorDashboard() {
     language: "en"
   });
 
-  const [notificationSettings, setNotificationSettings] = useState({
-    emailNotifications: true,
-    assignmentSubmissions: true,
-    gradeReminders: true,
-    systemUpdates: true,
-    studentMessages: true,
-    weeklyDigest: false,
-    pushNotifications: true
-  });
+  // Update profile settings when user data is available
+  useEffect(() => {
+    if (user) {
+      setProfileSettings(prev => ({
+        ...prev,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email || ''
+      }));
+    }
+  }, [user]);
 
-  const [privacySettings, setPrivacySettings] = useState({
-    profileVisibility: "public",
-    showEmail: true,
-    showCourses: true,
-    allowMessages: true,
-    dataSharing: false
-  });
+
   
   // Analytics and Settings state
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
@@ -209,65 +195,7 @@ export default function InstructorDashboard() {
     selectedRubricId: '1'
   });
   
-  // Assignment management state
-  const [assignments, setAssignments] = useState<Assignment[]>([
-    {
-      id: "1",
-      title: "Data Structures Project",
-      courseCode: "CS201",
-      courseTitle: "Data Structures and Algorithms",
-      courseId: "cs201",
-      description: "Implement a binary search tree with basic operations.",
-      dueDate: "2024-11-15T23:59:00Z",
-      maxScore: 100,
-      isPublished: true,
-      submissionsCount: 22,
-      gradedCount: 18,
-      createdAt: "2024-10-01T10:00:00Z"
-    },
-    {
-      id: "2",
-      title: "Machine Learning Quiz",
-      courseCode: "CS401",
-      courseTitle: "Machine Learning Fundamentals",
-      courseId: "cs401",
-      description: "Quiz covering supervised learning algorithms and neural networks.",
-      dueDate: "2024-10-25T14:30:00Z",
-      maxScore: 50,
-      isPublished: true,
-      submissionsCount: 28,
-      gradedCount: 28,
-      createdAt: "2024-10-10T09:00:00Z"
-    },
-    {
-      id: "3",
-      title: "Web Development Portfolio",
-      courseCode: "CS201",
-      courseTitle: "Web Development Fundamentals",
-      courseId: "cs201",
-      description: "Create a responsive portfolio website using HTML, CSS, and JavaScript.",
-      dueDate: "2024-11-30T23:59:00Z",
-      maxScore: 150,
-      isPublished: true,
-      submissionsCount: 15,
-      gradedCount: 8,
-      createdAt: "2024-09-15T14:00:00Z"
-    },
-    {
-      id: "4",
-      title: "Database Design Assignment",
-      courseCode: "CS302",
-      courseTitle: "Database Systems",
-      courseId: "cs302",
-      description: "Design a normalized database schema for an e-commerce system.",
-      dueDate: "2024-10-20T17:00:00Z",
-      maxScore: 75,
-      isPublished: false,
-      submissionsCount: 0,
-      gradedCount: 0,
-      createdAt: "2024-10-05T11:30:00Z"
-    }
-  ]);
+  // Assignment management state - will be set after allAssignments is loaded
   
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "published" | "drafts">("all");
@@ -292,45 +220,34 @@ export default function InstructorDashboard() {
     },
   });
 
-  // Mock courses for assignment form
-  const courses = [
-    { id: "cs201-a", code: "CS201", section: "A", title: "Data Structures and Algorithms" },
-    { id: "cs201-b", code: "CS201", section: "B", title: "Data Structures and Algorithms" },
-    { id: "cs401-a", code: "CS401", section: "A", title: "Machine Learning Fundamentals" },
-    { id: "cs201-web", code: "CS201", section: "Web", title: "Web Development Fundamentals" },
-    { id: "cs302-a", code: "CS302", section: "A", title: "Database Systems" },
-  ];
+  // Use real courses from database for assignment form (will be assigned after teachingCourses is declared)
 
   // Create assignment mutation
   const createAssignmentMutation = useMutation({
     mutationFn: async (data: AssignmentFormData) => {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return data;
-    },
-    onSuccess: (data) => {
-      const course = courses.find(c => c.id === data.courseId);
-      const newAssignment: Assignment = {
-        id: Date.now().toString(),
-        title: data.title,
-        courseCode: course?.code || "",
-        courseTitle: course?.title || "",
-        courseId: data.courseId,
-        description: data.description,
-        dueDate: data.dueDate,
-        maxScore: data.maxScore,
-        isPublished: data.isPublished,
-        submissionsCount: 0,
-        gradedCount: 0,
-        createdAt: new Date().toISOString(),
-      };
+      const response = await fetch('/api/assignments', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
       
-      setAssignments(prev => [...prev, newAssignment]);
-      assignmentForm.reset();
+      if (!response.ok) {
+        throw new Error('Failed to create assignment');
+      }
+      
+      return response.json();
+    },
+    onSuccess: (assignment) => {
+      // Invalidate and refetch assignments to get the latest data
+      queryClient.invalidateQueries({ queryKey: ['/api/assignments/instructor', user?.id] });
+      
       setIsCreateDialogOpen(false);
+      assignmentForm.reset();
       toast({
         title: "Assignment Created",
-        description: "Assignment has been created successfully.",
+        description: `"${assignment.title}" has been created successfully.`,
       });
     },
     onError: () => {
@@ -430,25 +347,13 @@ export default function InstructorDashboard() {
       title: assignment.title,
       description: assignment.description,
       courseId: assignment.courseId,
-      dueDate: assignment.dueDate.split('T')[0], // Convert to date input format
+        dueDate: assignment.dueDate ? assignment.dueDate.split('T')[0] : '', // Convert to date input format
       maxScore: assignment.maxScore,
       isPublished: assignment.isPublished,
     });
     setIsEditDialogOpen(true);
   };
 
-  // Filter and search assignments
-  const filteredAssignments = assignments.filter(assignment => {
-    const matchesSearch = assignment.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         (assignment.courseCode?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
-                         (assignment.courseTitle?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
-    
-    const matchesFilter = filterStatus === "all" || 
-                         (filterStatus === "published" && assignment.isPublished) ||
-                         (filterStatus === "drafts" && !assignment.isPublished);
-    
-    return matchesSearch && matchesFilter;
-  });
 
   // Sign out handler
   const handleSignOut = () => {
@@ -766,14 +671,55 @@ export default function InstructorDashboard() {
 
   // Fetch instructor's courses
   const { data: teachingCourses = [], isLoading: coursesLoading } = useQuery<Course[]>({
-    queryKey: ['/api/courses/instructor', mockInstructor.id],
-    queryFn: () => apiGet(`/api/courses/instructor/${mockInstructor.id}`),
-    enabled: true,
+    queryKey: ['/api/courses/instructor', user?.id],
+    queryFn: () => apiGet(`/api/courses/instructor/${user?.id}`),
+    enabled: !!user?.id,
+  });
+
+  // Use real courses from database for assignment form
+  const courses = teachingCourses;
+
+  // Fetch assignments for all courses
+  const { data: allAssignments = [], isLoading: assignmentsLoading } = useQuery<Assignment[]>({
+    queryKey: ['/api/assignments/instructor', user?.id],
+    queryFn: async () => {
+      const assignments: Assignment[] = [];
+      for (const course of teachingCourses) {
+        try {
+          const courseAssignments = await apiGet(`/api/courses/${course.id}/assignments`);
+          assignments.push(...courseAssignments.map((assignment: any) => ({
+            ...assignment,
+            courseTitle: course.title,
+            courseCode: course.code
+          })));
+        } catch (error) {
+          console.error(`Error fetching assignments for course ${course.id}:`, error);
+        }
+      }
+      return assignments;
+    },
+    enabled: teachingCourses.length > 0,
+  });
+
+  // Assignment management state - using real data from query
+  const assignments = allAssignments;
+
+  // Filter and search assignments
+  const filteredAssignments = assignments.filter(assignment => {
+    const matchesSearch = assignment.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                         (assignment.courseCode?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
+                         (assignment.courseTitle?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+    
+    const matchesFilter = filterStatus === "all" || 
+                         (filterStatus === "published" && assignment.isPublished) ||
+                         (filterStatus === "drafts" && !assignment.isPublished);
+    
+    return matchesSearch && matchesFilter;
   });
 
   // Fetch course statistics (enrollments, assignments, pending grades)
   const { data: courseStats = {} } = useQuery({
-    queryKey: ['/api/courses/stats', mockInstructor.id],
+    queryKey: ['/api/courses/stats', user?.id],
     queryFn: async () => {
       const stats: Record<string, { students: number; assignments: number; pendingGrades: number }> = {};
       
@@ -797,31 +743,10 @@ export default function InstructorDashboard() {
     enabled: teachingCourses.length > 0,
   });
 
-  // Fetch assignments for all courses
-  const { data: allAssignments = [], isLoading: assignmentsLoading } = useQuery<Assignment[]>({
-    queryKey: ['/api/assignments/instructor', mockInstructor.id],
-    queryFn: async () => {
-      const assignments: Assignment[] = [];
-      for (const course of teachingCourses) {
-        try {
-          const courseAssignments = await apiGet(`/api/courses/${course.id}/assignments`);
-          assignments.push(...courseAssignments.map((assignment: any) => ({
-            ...assignment,
-            courseTitle: course.title,
-            courseCode: course.code
-          })));
-        } catch (error) {
-          console.error(`Error fetching assignments for course ${course.id}:`, error);
-        }
-      }
-      return assignments;
-    },
-    enabled: teachingCourses.length > 0,
-  });
 
   // Fetch recent submissions
   const { data: recentSubmissions = [], isLoading: submissionsLoading } = useQuery<Submission[]>({
-    queryKey: ['/api/submissions/recent', mockInstructor.id],
+    queryKey: ['/api/submissions/recent', user?.id],
     queryFn: async () => {
       const submissions: Submission[] = [];
       
@@ -841,75 +766,11 @@ export default function InstructorDashboard() {
         }
       }
       
-      // If no real submissions, return sample data for demonstration
-      if (submissions.length === 0) {
-        return [
-          {
-            id: 'sample-1',
-            studentName: 'John Smith',
-            assignmentTitle: 'Essay on Climate Change',
-            courseCode: 'ENV-101',
-            courseTitle: 'Environmental Science',
-            status: 'submitted',
-            submittedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago
-            aiGrade: null,
-            content: 'This is a sample essay about climate change and its impact on global ecosystems...',
-            wordCount: 1250
-          },
-          {
-            id: 'sample-2',
-            studentName: 'Sarah Johnson',
-            assignmentTitle: 'Critical Analysis of Modern Literature',
-            courseCode: 'ENG-201',
-            courseTitle: 'English Literature',
-            status: 'graded',
-            submittedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // 1 day ago
-            aiGrade: 87,
-            content: 'A detailed analysis of contemporary literary themes and their social implications...',
-            wordCount: 2100
-          },
-          {
-            id: 'sample-3',
-            studentName: 'Michael Chen',
-            assignmentTitle: 'Research Paper on AI Ethics',
-            courseCode: 'CS-301',
-            courseTitle: 'Computer Science Ethics',
-            status: 'submitted',
-            submittedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), // 3 hours ago
-            aiGrade: null,
-            content: 'An analysis of ethical considerations in artificial intelligence development...',
-            wordCount: 3200
-          },
-          {
-            id: 'sample-4',
-            studentName: 'Emily Davis',
-            assignmentTitle: 'Reflective Essay on Social Psychology',
-            courseCode: 'PSY-102',
-            courseTitle: 'Introduction to Psychology',
-            status: 'graded',
-            submittedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
-            aiGrade: 92,
-            content: 'A personal reflection on social psychology concepts and their real-world applications...',
-            wordCount: 1800
-          },
-          {
-            id: 'sample-5',
-            studentName: 'Alex Rodriguez',
-            assignmentTitle: 'Argumentative Essay on Digital Privacy',
-            courseCode: 'PHIL-201',
-            courseTitle: 'Ethics and Technology',
-            status: 'submitted',
-            submittedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(), // 4 hours ago
-            aiGrade: null,
-            content: 'An argumentative piece examining the balance between digital privacy and security...',
-            wordCount: 1500
-          }
-        ];
-      }
+      // Return only real submissions from database - no mock data
       
       return submissions.sort((a, b) => new Date(b.submittedAt || b.createdAt).getTime() - new Date(a.submittedAt || a.createdAt).getTime()).slice(0, 10);
     },
-    enabled: true, // Always enabled to show sample data
+    enabled: teachingCourses.length > 0, // Only fetch when instructor has courses
   });
 
   const renderAssignments = () => {
@@ -1771,166 +1632,7 @@ export default function InstructorDashboard() {
           </CardContent>
         </Card>
 
-        {/* Notification Preferences */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Bell className="h-5 w-5 mr-2" />
-              Notification Preferences
-            </CardTitle>
-            <CardDescription>
-              Choose how you want to be notified about course activities
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Email Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <Mail className="h-4 w-4 mr-2" />
-                Email Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailAssignments">Assignment Submissions</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified when students submit assignments</p>
-                  </div>
-                  <Switch
-                    id="emailAssignments"
-                    checked={notificationSettings.assignmentSubmissions}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, assignmentSubmissions: checked})}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailGrades">Grade Reminders</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get reminded about pending grades</p>
-                  </div>
-                  <Switch
-                    id="emailGrades"
-                    checked={notificationSettings.gradeReminders}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, gradeReminders: checked})}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailMessages">Student Messages</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified when students send messages</p>
-                  </div>
-                  <Switch
-                    id="emailMessages"
-                    checked={notificationSettings.studentMessages}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, studentMessages: checked})}
-                  />
-                </div>
-              </div>
-            </div>
 
-            <Separator />
-
-            {/* Push Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Push Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="pushNotifications">Push Notifications</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Receive push notifications on your device</p>
-                  </div>
-                  <Switch
-                    id="pushNotifications"
-                    checked={notificationSettings.pushNotifications}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, pushNotifications: checked})}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Digest Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <Calendar className="h-4 w-4 mr-2" />
-                Digest Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="weeklyDigest">Weekly Summary</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Weekly summary of course activities</p>
-                  </div>
-                  <Switch
-                    id="weeklyDigest"
-                    checked={notificationSettings.weeklyDigest}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, weeklyDigest: checked})}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Button onClick={() => {/* Handle save notifications */}}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Notification Preferences
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Privacy Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Shield className="h-5 w-5 mr-2" />
-              Privacy Settings
-            </CardTitle>
-            <CardDescription>
-              Control your privacy and visibility
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="profileVisible">Profile Visibility</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Make your profile visible to students</p>
-              </div>
-              <Switch
-                id="profileVisible"
-                checked={privacySettings.profileVisibility === "public"}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, profileVisibility: checked ? "public" : "private"})}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="showEmail">Show Email Address</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Display your email on your profile</p>
-              </div>
-              <Switch
-                id="showEmail"
-                checked={privacySettings.showEmail}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, showEmail: checked})}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="allowMessages">Allow Messages</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Allow students to message you</p>
-              </div>
-              <Switch
-                id="allowMessages"
-                checked={privacySettings.allowMessages}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, allowMessages: checked})}
-              />
-            </div>
-
-            <Button onClick={() => {/* Handle save privacy */}}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Privacy Settings
-            </Button>
-          </CardContent>
-        </Card>
 
         {/* Account Security */}
         <Card>
@@ -1970,118 +1672,6 @@ export default function InstructorDashboard() {
               <span className="font-bold text-xl text-blue-600 dark:text-blue-400">CHECKmate</span>
             </div>
             <div className="ml-auto flex items-center space-x-2">
-              <Popover open={isNotificationsOpen} onOpenChange={setIsNotificationsOpen}>
-                <PopoverTrigger asChild>
-                  <div className="relative inline-block">
-                    <Button variant="ghost" size="sm" data-testid="button-notifications">
-                      <Bell className="h-5 w-5" />
-                    </Button>
-                    {notifications.filter(n => !n.isRead).length > 0 && (
-                      <span className="absolute -top-2 -right-2 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium z-10">
-                        {notifications.filter(n => !n.isRead).length}
-                      </span>
-                    )}
-                  </div>
-                </PopoverTrigger>
-                <PopoverContent className="w-80 p-0" align="end">
-                  <div className="p-4 border-b">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-semibold text-lg flex items-center">
-                          <Bell className="h-5 w-5 mr-2" />
-                          Notifications
-                        </h3>
-                        <p className="text-sm text-muted-foreground">
-                          Stay updated with your course activities
-                        </p>
-                      </div>
-                      {notifications.some(n => !n.isRead) && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={markAllAsRead}
-                          className="text-xs"
-                        >
-                          Mark all read
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="max-h-96 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <div className="p-4 text-center text-muted-foreground">
-                        No notifications
-                      </div>
-                    ) : (
-                      notifications.map((notification) => (
-                        <div 
-                          key={notification.id} 
-                          className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
-                            notification.isRead 
-                              ? 'bg-background' 
-                              : 'bg-blue-50 dark:bg-blue-900/20'
-                          }`}
-                          data-testid={`notification-${notification.id}`}
-                          onClick={() => markNotificationAsRead(notification.id)}
-                        >
-                          <div className="flex items-start space-x-3">
-                            <div className="flex-shrink-0">
-                              {notification.type === 'info' && (
-                                <div className="h-5 w-5 rounded-full bg-blue-500 flex items-center justify-center">
-                                  <div className="h-2 w-2 bg-white rounded-full"></div>
-                                </div>
-                              )}
-                              {notification.type === 'warning' && (
-                                <div className="h-5 w-5 rounded-full bg-yellow-500 flex items-center justify-center">
-                                  <div className="h-2 w-2 bg-white rounded-full"></div>
-                                </div>
-                              )}
-                              {notification.type === 'success' && (
-                                <div className="h-5 w-5 rounded-full bg-green-500 flex items-center justify-center">
-                                  <div className="h-2 w-2 bg-white rounded-full"></div>
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium">{notification.title}</p>
-                                <div className="flex items-center space-x-2">
-                                  <span className="text-xs text-muted-foreground">{notification.timestamp}</span>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      deleteNotification(notification.id);
-                                    }}
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </Button>
-                                </div>
-                              </div>
-                              <p className="text-sm text-muted-foreground mt-1">{notification.message}</p>
-                              {!notification.isRead && (
-                                <Badge variant="outline" className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 mt-2">
-                                  New
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setIsChatOpen(true)}
-                data-testid="button-chat"
-              >
-                <MessageSquare className="h-5 w-5" />
-              </Button>
               <ThemeToggle />
             </div>
           </div>

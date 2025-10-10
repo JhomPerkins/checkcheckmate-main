@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Eye, EyeOff, UserPlus } from "lucide-react";
@@ -14,9 +15,10 @@ const registerSchema = z.object({
   firstName: z.string().min(2, "First name must be at least 2 characters"),
   lastName: z.string().min(2, "Last name must be at least 2 characters"),
   email: z.string().email("Please enter a valid email address"),
-  studentId: z.string().optional(),
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string(),
+  yearLevel: z.number().min(1, "Please select year level").max(4, "Invalid year level"),
+  programId: z.string().min(1, "Please select a program"),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords do not match",
   path: ["confirmPassword"],
@@ -40,6 +42,23 @@ export default function RegisterForm({
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [programs, setPrograms] = useState<any[]>([]);
+
+  // Fetch programs on component mount
+  useEffect(() => {
+    const fetchPrograms = async () => {
+      try {
+        const response = await fetch('/api/programs');
+        if (response.ok) {
+          const data = await response.json();
+          setPrograms(data);
+        }
+      } catch (error) {
+        console.error('Error fetching programs:', error);
+      }
+    };
+    fetchPrograms();
+  }, []);
 
   const form = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
@@ -50,6 +69,8 @@ export default function RegisterForm({
       studentId: "",
       password: "",
       confirmPassword: "",
+      yearLevel: 1,
+      programId: "",
     },
   });
 
@@ -146,15 +167,54 @@ export default function RegisterForm({
           </div>
 
           {isStudent && (
-            <div className="space-y-2">
-              <Label htmlFor="studentId">Student ID (Optional)</Label>
-              <Input
-                id="studentId"
-                placeholder="Enter your student ID"
-                data-testid="input-student-id"
-                {...form.register("studentId")}
-              />
-            </div>
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="yearLevel">Year Level</Label>
+                <Select
+                  value={form.watch("yearLevel")?.toString()}
+                  onValueChange={(value) => form.setValue("yearLevel", parseInt(value))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select year level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1st Year</SelectItem>
+                    <SelectItem value="2">2nd Year</SelectItem>
+                    <SelectItem value="3">3rd Year</SelectItem>
+                    <SelectItem value="4">4th Year</SelectItem>
+                  </SelectContent>
+                </Select>
+                {form.formState.errors.yearLevel && (
+                  <p className="text-sm text-destructive">
+                    {form.formState.errors.yearLevel.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="programId">Program</Label>
+                <Select
+                  value={form.watch("programId")}
+                  onValueChange={(value) => form.setValue("programId", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select your program" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {programs.map((program) => (
+                      <SelectItem key={program.id} value={program.id}>
+                        {program.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {form.formState.errors.programId && (
+                  <p className="text-sm text-destructive">
+                    {form.formState.errors.programId.message}
+                  </p>
+                )}
+              </div>
+            </>
           )}
 
           <div className="space-y-2">

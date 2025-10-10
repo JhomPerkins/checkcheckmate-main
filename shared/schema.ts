@@ -3,6 +3,30 @@ import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, unique } fr
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Programs table
+export const programs = pgTable("programs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(), // e.g., "Bachelor of Science in Computer Studies"
+  code: text("code").notNull().unique(), // e.g., "BSCS"
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Instructor-Program assignments (many-to-many relationship)
+export const instructorPrograms = pgTable("instructor_programs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  instructorId: varchar("instructor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  programId: varchar("program_id").notNull().references(() => programs.id, { onDelete: "cascade" }),
+  assignedAt: timestamp("assigned_at").defaultNow(),
+  assignedBy: varchar("assigned_by").references(() => users.id), // Who assigned this instructor to the program
+  isActive: boolean("is_active").default(true),
+}, (table) => ({
+  // Ensure unique instructor-program combinations
+  uniqueInstructorProgram: unique("unique_instructor_program").on(table.instructorId, table.programId),
+}));
+
 // Users table
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -12,6 +36,14 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   role: text("role").$type<'student' | 'instructor' | 'administrator'>().notNull(),
   studentId: text("student_id"), // Optional for students
+  yearLevel: integer("year_level"), // For students: 1, 2, 3, 4
+  programId: varchar("program_id").references(() => programs.id), // For students
+  isActive: boolean("is_active").default(true),
+  isArchived: boolean("is_archived").default(false),
+  archivedAt: timestamp("archived_at"),
+  approvalStatus: text("approval_status").$type<'pending' | 'approved' | 'rejected'>().default('pending'), // For students: pending approval
+  approvedAt: timestamp("approved_at"),
+  approvedBy: varchar("approved_by").references(() => users.id), // Who approved/rejected the student
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -23,7 +55,8 @@ export const courses = pgTable("courses", {
   description: text("description"),
   code: text("code").notNull(), // e.g., "CS101" (no longer unique)
   section: text("section").notNull().default("A"), // e.g., "A", "B", "1", "2"
-  instructorId: varchar("instructor_id").notNull().references(() => users.id),
+  instructorId: varchar("instructor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  programId: varchar("program_id").notNull().references(() => programs.id, { onDelete: "cascade" }), // Course must belong to a program
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -36,7 +69,7 @@ export const courses = pgTable("courses", {
 export const enrollments = pgTable("enrollments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   courseId: varchar("course_id").notNull().references(() => courses.id),
-  studentId: varchar("student_id").notNull().references(() => users.id),
+  studentId: varchar("student_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   enrolledAt: timestamp("enrolled_at").defaultNow(),
 });
 
@@ -59,7 +92,7 @@ export const assignments = pgTable("assignments", {
 export const submissions = pgTable("submissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   assignmentId: varchar("assignment_id").notNull().references(() => assignments.id),
-  studentId: varchar("student_id").notNull().references(() => users.id),
+  studentId: varchar("student_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   content: text("content"), // Student's written submission
   fileName: text("file_name"), // If file uploaded
   filePath: text("file_path"), // Path to uploaded file
@@ -89,7 +122,7 @@ export const announcements = pgTable("announcements", {
   title: text("title").notNull(),
   content: text("content").notNull(),
   isImportant: boolean("is_important").default(false),
-  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdBy: varchar("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -108,7 +141,7 @@ export const materials = pgTable("materials", {
   externalUrl: text("external_url"), // For links to external resources
   isPublished: boolean("is_published").default(false),
   orderIndex: integer("order_index").default(0), // For ordering materials
-  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdBy: varchar("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -124,10 +157,21 @@ export const plagiarismReports = pgTable("plagiarism_reports", {
 });
 
 // Relations
-export const usersRelations = relations(users, ({ many }) => ({
+export const programsRelations = relations(programs, ({ many }) => ({
+  users: many(users),
+  courses: many(courses),
+  instructorPrograms: many(instructorPrograms),
+}));
+
+export const usersRelations = relations(users, ({ one, many }) => ({
+  program: one(programs, {
+    fields: [users.programId],
+    references: [programs.id],
+  }),
   courses: many(courses),
   enrollments: many(enrollments),
   submissions: many(submissions),
+  instructorPrograms: many(instructorPrograms),
 }));
 
 export const coursesRelations = relations(courses, ({ one, many }) => ({
@@ -135,10 +179,29 @@ export const coursesRelations = relations(courses, ({ one, many }) => ({
     fields: [courses.instructorId],
     references: [users.id],
   }),
+  program: one(programs, {
+    fields: [courses.programId],
+    references: [programs.id],
+  }),
   enrollments: many(enrollments),
   assignments: many(assignments),
   announcements: many(announcements),
   materials: many(materials),
+}));
+
+export const instructorProgramsRelations = relations(instructorPrograms, ({ one }) => ({
+  instructor: one(users, {
+    fields: [instructorPrograms.instructorId],
+    references: [users.id],
+  }),
+  program: one(programs, {
+    fields: [instructorPrograms.programId],
+    references: [programs.id],
+  }),
+  assignedByUser: one(users, {
+    fields: [instructorPrograms.assignedBy],
+    references: [users.id],
+  }),
 }));
 
 export const enrollmentsRelations = relations(enrollments, ({ one }) => ({
@@ -209,6 +272,18 @@ export const plagiarismReportsRelations = relations(plagiarismReports, ({ one })
 }));
 
 // Zod schemas
+export const insertProgramSchema = createInsertSchema(programs).pick({
+  name: true,
+  code: true,
+  description: true,
+});
+
+export const insertInstructorProgramSchema = createInsertSchema(instructorPrograms).pick({
+  instructorId: true,
+  programId: true,
+  assignedBy: true,
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   firstName: true,
   lastName: true,
@@ -216,6 +291,10 @@ export const insertUserSchema = createInsertSchema(users).pick({
   password: true,
   role: true,
   studentId: true,
+  yearLevel: true,
+  programId: true,
+  isActive: true,
+  isArchived: true,
 });
 
 export const insertCourseSchema = createInsertSchema(courses).pick({
@@ -224,6 +303,7 @@ export const insertCourseSchema = createInsertSchema(courses).pick({
   code: true,
   section: true,
   instructorId: true,
+  programId: true,
 });
 
 export const insertAssignmentSchema = createInsertSchema(assignments).pick({
@@ -268,6 +348,10 @@ export const insertMaterialSchema = createInsertSchema(materials).pick({
 });
 
 // Types
+export type InsertProgram = z.infer<typeof insertProgramSchema>;
+export type Program = typeof programs.$inferSelect;
+export type InstructorProgram = typeof instructorPrograms.$inferSelect;
+export type InsertInstructorProgram = typeof instructorPrograms.$inferInsert;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type Course = typeof courses.$inferSelect;

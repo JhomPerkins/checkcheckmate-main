@@ -1,43 +1,30 @@
 import { Pool, neonConfig } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-serverless';
-import { drizzle as drizzleSQLite } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
 import ws from "ws";
 import * as schema from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
 
-// Check if we have a DATABASE_URL, if not, use SQLite for local development
+// Always use Neon PostgreSQL database
 if (!process.env.DATABASE_URL) {
-  console.log(`
-⚠️  DATABASE_URL not set - using SQLite for local development
+  throw new Error(`
+❌ DATABASE_URL is required but not set!
 
-For production, you should:
-1. Create a .env file in the project root
-2. Add your Neon Database URL to it:
+Please set up your Neon database:
+1. Go to https://console.neon.tech/
+2. Sign up for a free account
+3. Create a new project
+4. Copy the connection string from the dashboard
+5. Set the DATABASE_URL environment variable:
+   export DATABASE_URL="postgresql://username:password@hostname:port/database?sslmode=require"
+
+Or create a .env file in the project root with:
    DATABASE_URL=postgresql://username:password@hostname:port/database?sslmode=require
-
-3. Get a free database from Neon:
-   - Go to https://console.neon.tech/
-   - Sign up for a free account
-   - Create a new project
-   - Copy the connection string from the dashboard
-
-For now, using SQLite database: ./dev.db
 `);
 }
 
-let pool: Pool | undefined;
-let db: any;
-
-if (process.env.DATABASE_URL) {
-  // Use PostgreSQL (Neon) for production
-  pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  db = drizzle({ client: pool, schema });
-} else {
-  // Use SQLite for local development
-  const sqlite = new Database('./dev.db');
-  db = drizzleSQLite(sqlite, { schema });
-}
+// Always use PostgreSQL (Neon)
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const db = drizzle({ client: pool, schema });
 
 export { pool, db };

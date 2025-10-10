@@ -1,0 +1,1 @@
+ALTER TABLE "users" ALTER COLUMN "approval_status" SET DEFAULT 'pending';

@@ -39,6 +39,21 @@ export class AuthService {
         throw new Error(`Access denied. This account is registered as a ${user.role}, but you're trying to sign in as a ${role}.`);
       }
 
+      // Check if user is active
+      if (!user.isActive) {
+        throw new Error('Account is inactive');
+      }
+
+      // Check approval status for students
+      if (user.role === 'student') {
+        if (user.approvalStatus === 'pending') {
+          throw new Error('Your registration is pending approval. Please wait for an administrator to approve your account.');
+        }
+        if (user.approvalStatus === 'rejected') {
+          throw new Error('Your registration has been rejected. Please contact an administrator for assistance.');
+        }
+      }
+
       // Verify password
       const isPasswordValid = await bcrypt.compare(password, user.password);
       
@@ -83,7 +98,9 @@ export class AuthService {
         email: userData.email,
         password: hashedPassword,
         role: userData.role,
-        studentId: userData.studentId || null
+        studentId: null, // Will be auto-generated for students
+        yearLevel: userData.yearLevel || null,
+        programId: userData.programId || null,
       };
 
       // Create user in database

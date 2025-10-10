@@ -1,14 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useUser } from "@/contexts/UserContext";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
@@ -27,172 +27,235 @@ const mockAdmin = {
   role: "administrator" as const,
 };
 
-// Mock user data for User Management
-const mockUsers = [
-  {
-    id: "1",
-    name: "Jovilyn Saging",
-    email: "j.saging@example.edu",
-    role: "Student",
-    status: "Active",
-    plagiarismFlags: 1,
-    lastLogin: "Today, 10:30 AM"
-  },
-  {
-    id: "2",
-    name: "Marc Lhester John Sagun",
-    email: "m.sagun@example.edu",
-    role: "Professor",
-    status: "Active",
-    plagiarismFlags: 0,
-    lastLogin: "Yesterday, 3:15 PM"
-  },
-  {
-    id: "3",
-    name: "Amanda Rodriguez",
-    email: "a.rodriguez@example.edu",
-    role: "Student",
-    status: "Inactive",
-    plagiarismFlags: 3,
-    lastLogin: "Jan 15, 12:45 PM"
-  },
-  {
-    id: "4",
-    name: "Jhomari Perkins",
-    email: "j.perkins@example.edu",
-    role: "Admin",
-    status: "Active",
-    plagiarismFlags: 0,
-    lastLogin: "Today, 9:10 AM"
-  }
-];
+// Real user data is now fetched from the database
 
 export default function AdminDashboard() {
   const [, setLocation] = useLocation();
   const { user, logout } = useUser();
-  const [selectedTab, setSelectedTab] = useState<'overview' | 'users' | 'courses' | 'reports' | 'settings'>('overview');
+  const queryClient = useQueryClient();
+  const [selectedTab, setSelectedTab] = useState<'overview' | 'users' | 'programs' | 'courses' | 'student-approval' | 'reports' | 'settings'>('overview');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [userView, setUserView] = useState<'active' | 'archived' | 'all'>('active');
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState("All Roles");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [activeAdminTab, setActiveAdminTab] = useState<'users' | 'permissions' | 'detection' | 'logs'>('users');
   
-  // User Management states
-  const [users, setUsers] = useState(mockUsers);
+  // Fetch pending students for approval
+  const { data: pendingStudents = [], isLoading: pendingStudentsLoading, refetch: refetchPendingStudents } = useQuery({
+    queryKey: ['pending-students'],
+    queryFn: async () => {
+      const response = await fetch('/api/admin/pending-students');
+      if (!response.ok) throw new Error('Failed to fetch pending students');
+      return response.json();
+    },
+  });
+
+  
+  // User Management states - fetch real users from database
+  const { data: users = [], isLoading: usersLoading, refetch: refetchUsers } = useQuery({
+    queryKey: ['users', userView],
+    queryFn: async () => {
+      const url = userView === 'all' ? '/api/users' : `/api/users?status=${userView}`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch users');
+      const usersData = await response.json();
+      
+      // Fetch assigned programs for each instructor
+      const usersWithPrograms = await Promise.all(
+        usersData.map(async (user: any) => {
+          if (user.role === 'instructor') {
+            try {
+              const programsResponse = await fetch(`/api/instructors/${user.id}/programs`);
+              if (programsResponse.ok) {
+                const programs = await programsResponse.json();
+                return { ...user, assignedPrograms: programs.map((p: any) => p.id) };
+              }
+            } catch (error) {
+              console.error('Error fetching instructor programs:', error);
+            }
+          }
+          return { ...user, assignedPrograms: [] };
+        })
+      );
+      
+      return usersWithPrograms;
+    }
+  });
+
+  // Auto-assign instructors to programs for demo
+  const assignInstructorsToPrograms = async () => {
+    try {
+      const instructors = users.filter(user => user.role === 'instructor');
+      const computerStudiesProgram = programs.find(p => p.name.includes('Computer Studies'));
+      
+      if (instructors.length > 0 && computerStudiesProgram) {
+        for (const instructor of instructors) {
+          // Check if already assigned
+          const response = await fetch(`/api/instructors/${instructor.id}/programs`);
+          if (response.ok) {
+            const existingPrograms = await response.json();
+            if (!existingPrograms.some((p: any) => p.id === computerStudiesProgram.id)) {
+              // Assign to Computer Studies program
+              await fetch(`/api/instructors/${instructor.id}/programs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  programId: computerStudiesProgram.id,
+                  assignedBy: user?.id
+                }),
+              });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error auto-assigning instructors:', error);
+    }
+  };
+
+  // Program Management states - fetch real programs from database
+  const { data: programs = [], isLoading: programsLoading, refetch: refetchPrograms } = useQuery({
+    queryKey: ['programs'],
+    queryFn: async () => {
+      const response = await fetch('/api/programs');
+      if (!response.ok) throw new Error('Failed to fetch programs');
+      return response.json();
+    }
+  });
+
+  // Ensure admin users are always active on component mount
+  useEffect(() => {
+    const ensureAdminActive = async () => {
+      try {
+        await fetch('/api/admin/ensure-active', { method: 'POST' });
+        refetchUsers(); // Refresh the user list
+        
+        // Auto-assign instructors to programs for demo purposes
+        await assignInstructorsToPrograms();
+      } catch (error) {
+        console.error('Error ensuring admin users are active:', error);
+      }
+    };
+    ensureAdminActive();
+  }, [refetchUsers, users, programs, user]);
   const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [isSystemSettingsOpen, setIsSystemSettingsOpen] = useState(false);
+
+  // Program Management states
+  const [isAddProgramModalOpen, setIsAddProgramModalOpen] = useState(false);
+  const [isEditProgramModalOpen, setIsEditProgramModalOpen] = useState(false);
+  const [isDeleteProgramDialogOpen, setIsDeleteProgramDialogOpen] = useState(false);
+  const [selectedProgram, setSelectedProgram] = useState<any>(null);
+  const [isCreateCourseModalOpen, setIsCreateCourseModalOpen] = useState(false);
+  const [selectedProgramForCourse, setSelectedProgramForCourse] = useState<string>("");
+  const [programInstructors, setProgramInstructors] = useState<User[]>([]);
+  const [instructorProgramsCache, setInstructorProgramsCache] = useState<Record<string, string[]>>({});
+  const [isLoadingInstructorPrograms, setIsLoadingInstructorPrograms] = useState(false);
+  const [programForm, setProgramForm] = useState({
+    name: '',
+    code: '',
+    description: ''
+  });
+
+  // Notification states
+  const [notification, setNotification] = useState<{
+    type: 'success' | 'error' | 'info';
+    message: string;
+    show: boolean;
+  }>({
+    type: 'info',
+    message: '',
+    show: false
+  });
   
   // Form states
   const [userForm, setUserForm] = useState({
-    name: '',
+    firstName: '',
+    lastName: '',
     email: '',
-    role: 'Student',
-    status: 'Active',
-    plagiarismFlags: 0
+    password: '',
+    isActive: true,
+    assignedPrograms: [] as string[] // Array of program IDs for instructors
   });
 
   // Admin Settings state
   const [profileSettings, setProfileSettings] = useState({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || '',
-    email: user?.email || '',
+    firstName: '',
+    lastName: '',
+    email: '',
     department: "Administration",
     title: "System Administrator",
     bio: "Experienced administrator managing the CHECKmate learning management system.",
     language: "en"
   });
 
-  const [notificationSettings, setNotificationSettings] = useState({
-    emailNotifications: true,
-    userRegistrations: true,
-    systemAlerts: true,
-    securityAlerts: true,
-    weeklyReports: true,
-    pushNotifications: true
-  });
-
-  const [privacySettings, setPrivacySettings] = useState({
-    profileVisibility: "public",
-    showEmail: true,
-    showActivity: false,
-    allowMessages: true
-  });
-
-  // Course Management state
-  const [courses, setCourses] = useState([
-    {
-      id: "1",
-      name: "Introduction to Computer Science",
-      code: "CS101",
-      status: "Published",
-      instructor: "Dr. Maria Martinez",
-      enrolledStudents: 45,
-      maxStudents: 50,
-      createdDate: "2024-01-15",
-      lastModified: "2024-01-18",
-      startDate: "2024-02-01",
-      endDate: "2024-05-31",
-      description: "Fundamental concepts of computer science and programming"
-    },
-    {
-      id: "2",
-      name: "Data Structures and Algorithms",
-      code: "CS201",
-      status: "Published",
-      instructor: "Dr. John Smith",
-      enrolledStudents: 32,
-      maxStudents: 40,
-      createdDate: "2024-01-10",
-      lastModified: "2024-01-17",
-      startDate: "2024-02-15",
-      endDate: "2024-06-15",
-      description: "Advanced data structures and algorithmic problem solving"
-    },
-    {
-      id: "3",
-      name: "Web Development Fundamentals",
-      code: "CS301",
-      status: "Draft",
-      instructor: "Dr. Sarah Johnson",
-      enrolledStudents: 0,
-      maxStudents: 35,
-      createdDate: "2024-01-20",
-      lastModified: "2024-01-20",
-      startDate: "2024-03-01",
-      endDate: "2024-07-01",
-      description: "Modern web development with HTML, CSS, and JavaScript"
-    },
-    {
-      id: "4",
-      name: "Machine Learning Basics",
-      code: "CS401",
-      status: "Archived",
-      instructor: "Dr. Michael Chen",
-      enrolledStudents: 28,
-      maxStudents: 30,
-      createdDate: "2023-09-01",
-      lastModified: "2023-12-15",
-      startDate: "2023-09-15",
-      endDate: "2023-12-15",
-      description: "Introduction to machine learning concepts and applications"
+  // Update profile settings when user data is available
+  useEffect(() => {
+    if (user) {
+      setProfileSettings(prev => ({
+        ...prev,
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        email: user.email || ''
+      }));
     }
-  ]);
+  }, [user]);
+
+
+
+  // Course Management state - fetch from API
+  const { data: courses = [], isLoading: coursesLoading, refetch: refetchCourses } = useQuery({
+    queryKey: ['courses'],
+    queryFn: async () => {
+      const response = await fetch('/api/courses');
+      if (!response.ok) throw new Error('Failed to fetch courses');
+      return response.json();
+    }
+  });
 
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
   const [courseStatusFilter, setCourseStatusFilter] = useState("All Status");
-  const [isCreateCourseModalOpen, setIsCreateCourseModalOpen] = useState(false);
   const [isEditCourseModalOpen, setIsEditCourseModalOpen] = useState(false);
   const [isEnrollmentModalOpen, setIsEnrollmentModalOpen] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<any>(null);
+
+  // Fetch enrolled students for selected course
+  const { data: enrolledStudents = [], isLoading: enrolledStudentsLoading } = useQuery({
+    queryKey: ['enrolled-students', selectedCourse?.id],
+    queryFn: async () => {
+      if (!selectedCourse?.id) return [];
+      const response = await fetch(`/api/courses/${selectedCourse.id}/enrollments`);
+      if (!response.ok) throw new Error('Failed to fetch enrolled students');
+      return response.json();
+    },
+    enabled: !!selectedCourse?.id,
+  });
+
+  // Fetch course instructor
+  const { data: courseInstructor = null, isLoading: instructorLoading } = useQuery({
+    queryKey: ['course-instructor', selectedCourse?.id],
+    queryFn: async () => {
+      if (!selectedCourse?.id) return null;
+      const response = await fetch(`/api/courses/${selectedCourse.id}/instructor`);
+      if (!response.ok) throw new Error('Failed to fetch course instructor');
+      return response.json();
+    },
+    enabled: !!selectedCourse?.id,
+  });
+
   const [courseForm, setCourseForm] = useState({
     name: '',
     code: '',
     description: '',
     instructor: '',
+    section: 'A',
+    programId: '',
     maxStudents: 50,
     startDate: '',
     endDate: '',
@@ -204,120 +267,11 @@ export default function AdminDashboard() {
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [isTranscriptModalOpen, setIsTranscriptModalOpen] = useState(false);
 
-  // Mock reporting data
-  const [courseReports] = useState([
-    {
-      courseId: "1",
-      courseName: "Introduction to Computer Science",
-      courseCode: "CS101",
-      enrollmentRate: 90,
-      completionRate: 78,
-      averageGrade: 85.2,
-      totalStudents: 45,
-      completedStudents: 35,
-      averageTimeSpent: 42.5,
-      engagementScore: 8.2,
-      quizAverage: 82.1,
-      assignmentAverage: 88.3,
-      discussionPosts: 156,
-      lastActivity: "2024-01-18"
-    },
-    {
-      courseId: "2",
-      courseName: "Data Structures and Algorithms",
-      courseCode: "CS201",
-      enrollmentRate: 80,
-      completionRate: 65,
-      averageGrade: 79.8,
-      totalStudents: 32,
-      completedStudents: 21,
-      averageTimeSpent: 38.2,
-      engagementScore: 7.5,
-      quizAverage: 76.4,
-      assignmentAverage: 83.1,
-      discussionPosts: 98,
-      lastActivity: "2024-01-17"
-    }
-  ]);
+  // Mock reporting data - empty until real data is implemented
+  const [courseReports] = useState([]);
+  const [studentProgress] = useState([]);
+  const [activityLogs] = useState([]);
 
-  const [studentProgress] = useState([
-    {
-      studentId: "1",
-      studentName: "John Doe",
-      courseId: "1",
-      courseName: "Introduction to Computer Science",
-      modulesCompleted: 8,
-      totalModules: 12,
-      progressPercentage: 67,
-      currentGrade: 88.5,
-      timeSpent: 45.2,
-      lastActivity: "2024-01-18",
-      assignmentsSubmitted: 6,
-      quizzesCompleted: 4,
-      discussionPosts: 12
-    },
-    {
-      studentId: "2",
-      studentName: "Jane Smith",
-      courseId: "1",
-      courseName: "Introduction to Computer Science",
-      modulesCompleted: 12,
-      totalModules: 12,
-      progressPercentage: 100,
-      currentGrade: 92.3,
-      timeSpent: 52.8,
-      lastActivity: "2024-01-18",
-      assignmentsSubmitted: 8,
-      quizzesCompleted: 6,
-      discussionPosts: 18
-    }
-  ]);
-
-  const [activityLogs] = useState([
-    {
-      id: "1",
-      timestamp: "2024-01-18 14:30:25",
-      action: "Student Enrollment",
-      user: "John Doe",
-      course: "CS101 - Introduction to Computer Science",
-      details: "Student enrolled in course"
-    },
-    {
-      id: "2",
-      timestamp: "2024-01-18 14:25:12",
-      action: "Assignment Submission",
-      user: "Jane Smith",
-      course: "CS101 - Introduction to Computer Science",
-      details: "Submitted assignment: Programming Basics"
-    },
-    {
-      id: "3",
-      timestamp: "2024-01-18 14:20:45",
-      action: "Quiz Completion",
-      user: "Mike Johnson",
-      course: "CS201 - Data Structures and Algorithms",
-      details: "Completed quiz: Arrays and Linked Lists (Score: 85%)"
-    },
-    {
-      id: "4",
-      timestamp: "2024-01-18 14:15:33",
-      action: "Content Update",
-      user: "Dr. Maria Martinez",
-      course: "CS101 - Introduction to Computer Science",
-      details: "Updated module 3: Variables and Data Types"
-    },
-    {
-      id: "5",
-      timestamp: "2024-01-18 14:10:18",
-      action: "Discussion Post",
-      user: "Sarah Wilson",
-      course: "CS201 - Data Structures and Algorithms",
-      details: "Posted in discussion: Algorithm Complexity"
-    }
-  ]);
-
-  // Notification state
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [notifications, setNotifications] = useState([
     {
       id: "2",
@@ -383,67 +337,502 @@ export default function AdminDashboard() {
   // User Management handlers
   const handleAddUser = () => {
     setUserForm({
-      name: '',
+      firstName: '',
+      lastName: '',
       email: '',
-      role: 'Student',
-      status: 'Active',
-      plagiarismFlags: 0
+      password: '',
+      isActive: true,
+      assignedPrograms: []
     });
     setIsAddUserModalOpen(true);
   };
 
-  const handleEditUser = (user: any) => {
-    setSelectedUser(user);
-    setUserForm({
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      status: user.status,
-      plagiarismFlags: user.plagiarismFlags
-    });
-    setIsEditUserModalOpen(true);
-  };
 
   const handleDeleteUser = (user: any) => {
     setSelectedUser(user);
     setIsDeleteDialogOpen(true);
   };
 
-  const handleSaveUser = () => {
-    if (isAddUserModalOpen) {
-      const newUser = {
-        id: (users.length + 1).toString(),
-        ...userForm,
-        lastLogin: "Just now"
-      };
-      setUsers([...users, newUser]);
-      setIsAddUserModalOpen(false);
-    } else if (isEditUserModalOpen) {
-      setUsers(users.map(user => 
-        user.id === selectedUser.id 
-          ? { ...user, ...userForm }
-          : user
-      ));
-      setIsEditUserModalOpen(false);
-    }
+  const handleEditUser = async (user: any) => {
+    setSelectedUser(user);
+    setIsEditUserModalOpen(true); // Open modal immediately for better UX
+    
+    // Use cached assigned programs if available, otherwise fetch them
+    let assignedPrograms: string[] = [];
+    if (user.role === 'instructor') {
+      if (instructorProgramsCache[user.id]) {
+        assignedPrograms = instructorProgramsCache[user.id];
     setUserForm({
-      name: '',
-      email: '',
-      role: 'Student',
-      status: 'Active',
-      plagiarismFlags: 0
-    });
-    setSelectedUser(null);
+          firstName: user.firstName,
+          lastName: user.lastName,
+      email: user.email,
+          password: '', // Don't pre-fill password for security
+          isActive: user.isActive,
+          assignedPrograms
+        });
+      } else {
+        setIsLoadingInstructorPrograms(true);
+        try {
+          const response = await fetch(`/api/instructors/${user.id}/programs`);
+          if (response.ok) {
+            const programs = await response.json();
+            assignedPrograms = programs.map((p: any) => p.id);
+            // Cache the result
+            setInstructorProgramsCache(prev => ({
+              ...prev,
+              [user.id]: assignedPrograms
+            }));
+          }
+        } catch (error) {
+          console.error('Error fetching instructor programs:', error);
+        } finally {
+          setIsLoadingInstructorPrograms(false);
+        }
+        
+        setUserForm({
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          password: '', // Don't pre-fill password for security
+          isActive: user.isActive,
+          assignedPrograms
+        });
+      }
+    } else {
+      setUserForm({
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        password: '', // Don't pre-fill password for security
+        isActive: user.isActive,
+        assignedPrograms
+      });
+    }
   };
 
-  const handleConfirmDelete = () => {
-    setUsers(users.filter(user => user.id !== selectedUser.id));
+  const handleSaveUser = async () => {
+    if (isAddUserModalOpen) {
+      try {
+        const response = await fetch('/api/users', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            firstName: userForm.firstName,
+            lastName: userForm.lastName,
+            email: userForm.email,
+            password: userForm.password,
+            role: 'instructor'
+          }),
+        });
+        
+        if (response.ok) {
+          const newUser = await response.json();
+          
+          // Assign instructor to selected programs
+          if (userForm.assignedPrograms.length > 0) {
+            const assignmentPromises = userForm.assignedPrograms.map(programId =>
+              fetch(`/api/instructors/${newUser.id}/programs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  programId,
+                  assignedBy: user?.id
+                }),
+              })
+            );
+            
+        await Promise.all(assignmentPromises);
+        
+        // Update cache
+        setInstructorProgramsCache(prev => ({
+          ...prev,
+          [newUser.id]: userForm.assignedPrograms
+        }));
+      }
+      
+      setIsAddUserModalOpen(false);
+      showNotification('success', 'Instructor created successfully!');
+      // Refresh the users list
+      refetchUsers();
+        } else {
+          showNotification('error', 'Failed to create instructor');
+        }
+      } catch (error) {
+        console.error('Error creating instructor:', error);
+      }
+    } else if (isEditUserModalOpen && selectedUser) {
+      try {
+        const updateData: any = {
+          firstName: userForm.firstName,
+          lastName: userForm.lastName,
+          email: userForm.email,
+          isActive: userForm.isActive,
+        };
+        
+        // Only include password if it's provided
+        if (userForm.password && userForm.password.trim() !== '') {
+          updateData.password = userForm.password;
+        }
+        
+        const response = await fetch(`/api/users/${selectedUser.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(updateData),
+        });
+        
+        if (response.ok) {
+          // Update program assignments for instructors
+          if (selectedUser.role === 'instructor') {
+            try {
+              // First, remove all existing assignments
+              const currentProgramsResponse = await fetch(`/api/instructors/${selectedUser.id}/programs`);
+              if (currentProgramsResponse.ok) {
+                const currentPrograms = await currentProgramsResponse.json();
+                const removePromises = currentPrograms.map((program: any) =>
+                  fetch(`/api/instructors/${selectedUser.id}/programs/${program.id}`, {
+                    method: 'DELETE'
+                  })
+                );
+                await Promise.all(removePromises);
+              }
+              
+          // Then, add new assignments
+          if (userForm.assignedPrograms.length > 0) {
+            const assignmentPromises = userForm.assignedPrograms.map(programId =>
+              fetch(`/api/instructors/${selectedUser.id}/programs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  programId,
+                  assignedBy: user?.id
+                }),
+              })
+            );
+            await Promise.all(assignmentPromises);
+            
+            // Update cache
+            setInstructorProgramsCache(prev => ({
+              ...prev,
+              [selectedUser.id]: userForm.assignedPrograms
+            }));
+          }
+            } catch (programError) {
+              console.error('Error updating program assignments:', programError);
+              // Don't fail the entire operation if program assignment fails
+            }
+          }
+          
+          // Close modal and show success
+          setIsEditUserModalOpen(false);
+    setSelectedUser(null);
+          showNotification('success', 'User updated successfully!');
+          refetchUsers();
+        } else {
+          showNotification('error', 'Failed to update user');
+        }
+      } catch (error) {
+        console.error('Error updating user:', error);
+        showNotification('error', 'Error updating user');
+      }
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!selectedUser) return;
+    
+    try {
+      // First try to delete the user
+      const deleteResponse = await fetch(`/api/users/${selectedUser.id}`, {
+        method: 'DELETE',
+      });
+      
+      if (deleteResponse.ok) {
     setIsDeleteDialogOpen(false);
     setSelectedUser(null);
+        const message = selectedUser.isActive 
+          ? 'User deactivated successfully! (Cannot delete due to existing data)'
+          : 'User deleted successfully!';
+        showNotification('success', message);
+        // Refresh the users list
+        refetchUsers();
+      } else {
+        // If deletion fails, try soft delete only for active users
+        if (selectedUser.isActive) {
+          const deactivateResponse = await fetch(`/api/users/${selectedUser.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ isActive: false }),
+          });
+          
+          if (deactivateResponse.ok) {
+            setIsDeleteDialogOpen(false);
+            setSelectedUser(null);
+            showNotification('success', 'User deactivated successfully! (Cannot delete due to existing data)');
+            // Refresh the users list
+          refetchUsers();
+          } else {
+            const errorData = await deactivateResponse.json();
+            showNotification('error', errorData.error || 'Failed to deactivate user');
+          }
+        } else {
+          // For inactive users, deletion should always succeed with force delete
+          showNotification('error', 'Failed to delete inactive user');
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      showNotification('error', 'Error deleting user');
+    }
+  };
+
+  // Program Management functions
+  const handleAddProgram = () => {
+    setProgramForm({ name: '', code: '', description: '' });
+    setIsAddProgramModalOpen(true);
+  };
+
+  const handleEditProgram = (program: any) => {
+    setSelectedProgram(program);
+    setProgramForm({
+      name: program.name,
+      code: program.code,
+      description: program.description || ''
+    });
+    setIsEditProgramModalOpen(true);
+  };
+
+  const handleDeleteProgram = (program: any) => {
+    setSelectedProgram(program);
+    setIsDeleteProgramDialogOpen(true);
+  };
+
+  const handleSaveProgram = async () => {
+    try {
+      const url = isEditProgramModalOpen ? `/api/programs/${selectedProgram.id}` : '/api/programs';
+      const method = isEditProgramModalOpen ? 'PUT' : 'POST';
+      
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(programForm),
+      });
+      
+      if (response.ok) {
+        setIsAddProgramModalOpen(false);
+        setIsEditProgramModalOpen(false);
+        showNotification('success', 'Program saved successfully!');
+        // Refresh the programs list
+        refetchPrograms();
+      } else {
+        showNotification('error', 'Failed to save program');
+      }
+    } catch (error) {
+      console.error('Error saving program:', error);
+    }
+  };
+
+  const handleConfirmDeleteProgram = async () => {
+    try {
+      const response = await fetch(`/api/programs/${selectedProgram.id}`, {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        setIsDeleteProgramDialogOpen(false);
+        setSelectedProgram(null);
+        showNotification('success', 'Program deleted successfully!');
+        // Refresh the programs list
+        refetchPrograms();
+      } else {
+        showNotification('error', 'Failed to delete program');
+      }
+    } catch (error) {
+      console.error('Error deleting program:', error);
+    }
   };
 
   const handleSystemSettings = () => {
     setIsSystemSettingsOpen(true);
+  };
+
+  // Notification functions
+  const showNotification = (type: 'success' | 'error' | 'info', message: string) => {
+    setNotification({ type, message, show: true });
+    setTimeout(() => {
+      setNotification(prev => ({ ...prev, show: false }));
+    }, 3000);
+  };
+
+  // Bulk operations functions
+  const handleBulkArchive = async () => {
+    if (selectedUsers.length === 0) {
+      showNotification('error', 'Please select users to archive');
+      return;
+    }
+
+    // Check if any selected users are administrators
+    const selectedUserObjects = users.filter(user => selectedUsers.includes(user.id));
+    const adminUsers = selectedUserObjects.filter(user => user.role === 'administrator');
+    
+    if (adminUsers.length > 0) {
+      showNotification('info', `Skipping ${adminUsers.length} administrator account(s) - cannot archive admin users`);
+    }
+
+    try {
+      console.log('Attempting to archive users:', selectedUsers);
+      const response = await fetch('/api/users/bulk-archive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedUsers }),
+      });
+
+      console.log('Archive response status:', response.status);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Archive result:', result);
+        
+        let message = result.message || `${result.count || 0} users archived successfully!`;
+        if (adminUsers.length > 0) {
+          message += ` (${adminUsers.length} admin account(s) skipped)`;
+        }
+        
+        showNotification('success', message);
+        setSelectedUsers([]);
+        refetchUsers();
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.log('Archive error response:', errorData);
+        showNotification('error', errorData.error || 'Failed to archive users');
+      }
+    } catch (error) {
+      console.error('Bulk archive error:', error);
+      showNotification('error', 'Error archiving users');
+    }
+  };
+
+  const handleBulkReactivate = async () => {
+    if (selectedUsers.length === 0) {
+      showNotification('error', 'Please select users to reactivate');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/users/bulk-reactivate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedUsers }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        showNotification('success', result.message || `${selectedUsers.length} users reactivated successfully!`);
+        setSelectedUsers([]);
+        refetchUsers();
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        showNotification('error', errorData.error || 'Failed to reactivate users');
+      }
+    } catch (error) {
+      console.error('Bulk reactivate error:', error);
+      showNotification('error', 'Error reactivating users');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedUsers.length === 0) {
+      showNotification('error', 'Please select users to delete');
+      return;
+    }
+
+    // Check if any selected users are administrators
+    const selectedUserObjects = users.filter(user => selectedUsers.includes(user.id));
+    const adminUsers = selectedUserObjects.filter(user => user.role === 'administrator');
+    
+    if (adminUsers.length > 0) {
+      showNotification('info', `Skipping ${adminUsers.length} administrator account(s) - cannot delete admin users`);
+    }
+
+    try {
+      const response = await fetch('/api/users/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedUsers }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        
+        let message = result.message || `${result.count || 0} users processed successfully!`;
+        if (adminUsers.length > 0) {
+          message += ` (${adminUsers.length} admin account(s) skipped)`;
+        }
+        
+        showNotification('success', message);
+        setSelectedUsers([]);
+        refetchUsers();
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        showNotification('error', errorData.error || 'Failed to process users');
+      }
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      showNotification('error', 'Error processing users');
+    }
+  };
+
+  const handleSelectAllUsers = () => {
+    // Filter out admin users from selection
+    const selectableUsers = filteredUsers.filter(user => user.role !== 'administrator');
+    
+    if (selectedUsers.length === selectableUsers.length) {
+      setSelectedUsers([]);
+    } else {
+      setSelectedUsers(selectableUsers.map(user => user.id));
+    }
+  };
+
+  const handleSelectUser = (userId: string) => {
+    // Prevent selecting admin users
+    const user = users.find(u => u.id === userId);
+    if (user?.role === 'administrator') {
+      return; // Don't allow selecting admin users
+    }
+    
+    setSelectedUsers(prev => 
+      prev.includes(userId) 
+        ? prev.filter(id => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  const handleProgramToggle = (programId: string) => {
+    setUserForm(prev => ({
+      ...prev,
+      assignedPrograms: prev.assignedPrograms.includes(programId)
+        ? prev.assignedPrograms.filter(id => id !== programId)
+        : [...prev.assignedPrograms, programId]
+    }));
+  };
+
+  const resetUserForm = () => {
+    setUserForm({
+      firstName: '',
+      lastName: '',
+      email: '',
+      password: '',
+      isActive: true,
+      assignedPrograms: []
+    });
+    setSelectedUser(null);
   };
 
   const handleTabChange = (tab: 'users' | 'permissions' | 'detection' | 'logs') => {
@@ -468,7 +857,7 @@ export default function AdminDashboard() {
   const handleEditCourse = (course: any) => {
     setSelectedCourse(course);
     setCourseForm({
-      name: course.name,
+      name: course.title,
       code: course.code,
       description: course.description,
       instructor: course.instructor,
@@ -480,50 +869,110 @@ export default function AdminDashboard() {
     setIsEditCourseModalOpen(true);
   };
 
-  const handleSaveCourse = () => {
+  const handleSaveCourse = async () => {
+    try {
     if (isCreateCourseModalOpen) {
-      const newCourse = {
-        id: (courses.length + 1).toString(),
-        ...courseForm,
-        enrolledStudents: 0,
-        createdDate: new Date().toISOString().split('T')[0],
-        lastModified: new Date().toISOString().split('T')[0]
-      };
-      setCourses([...courses, newCourse]);
+        // Create new course via API
+        const response = await fetch('/api/courses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: courseForm.name,
+            code: courseForm.code,
+            description: courseForm.description,
+            section: courseForm.section,
+            instructorId: courseForm.instructor,
+            programId: courseForm.programId
+          })
+        });
+        
+        if (response.ok) {
+          showNotification('success', 'Course created successfully!');
+          refetchCourses();
       setIsCreateCourseModalOpen(false);
-    } else if (isEditCourseModalOpen) {
-      setCourses(courses.map(course => 
-        course.id === selectedCourse.id 
-          ? { ...course, ...courseForm, lastModified: new Date().toISOString().split('T')[0] }
-          : course
-      ));
+        } else {
+          showNotification('error', 'Failed to create course');
+        }
+      } else if (isEditCourseModalOpen && selectedCourse) {
+        // Update course via API
+        const response = await fetch(`/api/courses/${selectedCourse.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: courseForm.name,
+            code: courseForm.code,
+            description: courseForm.description,
+            section: courseForm.section,
+            instructorId: courseForm.instructor,
+            programId: courseForm.programId
+          })
+        });
+        
+        if (response.ok) {
+          showNotification('success', 'Course updated successfully!');
+          refetchCourses();
       setIsEditCourseModalOpen(false);
+        } else {
+          showNotification('error', 'Failed to update course');
     }
+      }
+      
+      // Reset form
     setCourseForm({
       name: '',
       code: '',
       description: '',
       instructor: '',
+        section: 'A',
+        programId: '',
       maxStudents: 50,
       startDate: '',
       endDate: '',
       status: 'Draft'
     });
     setSelectedCourse(null);
+    } catch (error) {
+      console.error('Error saving course:', error);
+      showNotification('error', 'Error saving course');
+    }
   };
 
-  const handleDeleteCourse = (course: any) => {
-    setSelectedCourse(course);
-    // This would open a confirmation dialog
-    setCourses(courses.filter(c => c.id !== course.id));
+  const handleDeleteCourse = async (course: any) => {
+    try {
+      const response = await fetch(`/api/courses/${course.id}`, {
+        method: 'DELETE'
+      });
+      
+      if (response.ok) {
+        showNotification('success', 'Course deleted successfully!');
+        refetchCourses();
+      } else {
+        showNotification('error', 'Failed to delete course');
+      }
+    } catch (error) {
+      console.error('Error deleting course:', error);
+      showNotification('error', 'Error deleting course');
+    }
   };
 
-  const handleArchiveCourse = (course: any) => {
-    setCourses(courses.map(c => 
-      c.id === course.id 
-        ? { ...c, status: 'Archived' }
-        : c
-    ));
+  const handleArchiveCourse = async (course: any) => {
+    try {
+      const response = await fetch(`/api/courses/${course.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: false })
+      });
+      
+      if (response.ok) {
+        showNotification('success', 'Course archived successfully!');
+        refetchCourses();
+      } else {
+        showNotification('error', 'Failed to archive course');
+      }
+    } catch (error) {
+      console.error('Error archiving course:', error);
+      showNotification('error', 'Error archiving course');
+    }
   };
 
   const handleManageEnrollment = (course: any) => {
@@ -531,30 +980,63 @@ export default function AdminDashboard() {
     setIsEnrollmentModalOpen(true);
   };
 
+  const handleRemoveEnrollment = async (enrollmentId: string) => {
+    try {
+      const response = await fetch(`/api/enrollments/${enrollmentId}`, {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        // Refresh the enrolled students list
+        queryClient.invalidateQueries({ queryKey: ['enrolled-students', selectedCourse?.id] });
+        showNotification('success', 'Student removed from course successfully');
+      } else {
+        showNotification('error', 'Failed to remove student from course');
+      }
+    } catch (error) {
+      console.error('Error removing enrollment:', error);
+      showNotification('error', 'Error removing student from course');
+    }
+  };
+
+
   // Filter courses based on search and filters
   const filteredCourses = courses.filter(course => {
-    const matchesSearch = course.name.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
-                         course.code.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
-                         course.instructor.toLowerCase().includes(courseSearchQuery.toLowerCase());
+    if (!course) return false;
+    
+    const courseName = course.title || '';
+    const courseCode = course.code || '';
+    const instructorName = course.instructor?.firstName && course.instructor?.lastName 
+      ? `${course.instructor.firstName} ${course.instructor.lastName}`
+      : course.instructor || '';
+    
+    const matchesSearch = courseName.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
+                         courseCode.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
+                         instructorName.toLowerCase().includes(courseSearchQuery.toLowerCase());
     const matchesStatus = courseStatusFilter === "All Status" || course.status === courseStatusFilter;
     
     return matchesSearch && matchesStatus;
   });
 
-  // Mock data queries - will be replaced with actual API calls
-  const { data: systemStats } = useQuery({
+  // Real-time admin statistics from database
+  const { data: systemStats = {
+    totalUsers: 0,
+    totalStudents: 0,
+    totalInstructors: 0,
+    totalAdmins: 0,
+    totalCourses: 0,
+    activeCourses: 0,
+    totalAssignments: 0,
+    plagiarismReports: 0,
+    aiGradingUsage: 0,
+  }, isLoading: statsLoading } = useQuery({
     queryKey: ['/api/admin/stats'],
-    enabled: false, // Disabled until backend is ready
-    initialData: {
-      totalUsers: 156,
-      totalStudents: 128,
-      totalInstructors: 24,
-      totalAdmins: 4,
-      totalCourses: 18,
-      activeCourses: 15,
-      totalAssignments: 87,
-      aiGradingUsage: 92.5,
+    queryFn: async () => {
+      const response = await fetch('/api/admin/stats');
+      if (!response.ok) throw new Error('Failed to fetch admin statistics');
+      return response.json();
     },
+    refetchInterval: 30000, // Refetch every 30 seconds for real-time data
   });
 
   const { data: recentActivity = [] } = useQuery({
@@ -587,10 +1069,11 @@ export default function AdminDashboard() {
 
   // Filter users based on search and filters
   const filteredUsers = users.filter(user => {
-    const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const fullName = `${user.firstName} ${user.lastName}`;
+    const matchesSearch = fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesRole = roleFilter === "All Roles" || user.role === roleFilter;
-    const matchesStatus = statusFilter === "All Status" || user.status === statusFilter;
+    const matchesStatus = statusFilter === "All Status" || (user.isActive ? "Active" : "Inactive") === statusFilter;
     
     return matchesSearch && matchesRole && matchesStatus;
   });
@@ -607,9 +1090,64 @@ export default function AdminDashboard() {
           </Button>
           <Button data-testid="button-add-user" onClick={handleAddUser}>
             <User className="mr-2 h-4 w-4" />
-            Add New User
+            Add New Instructor
           </Button>
         </div>
+      </div>
+
+      {/* User View Controls */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <Label>View:</Label>
+            <Select value={userView} onValueChange={(value: 'active' | 'archived' | 'all') => setUserView(value)}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="archived">Archived</SelectItem>
+                <SelectItem value="all">All</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <span className="text-sm text-muted-foreground">
+            {filteredUsers.length} users
+          </span>
+        </div>
+
+        {/* Bulk Operations */}
+        {selectedUsers.length > 0 && (
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-muted-foreground">
+              {selectedUsers.length} selected
+            </span>
+            {userView === 'active' && (
+              <Button variant="outline" size="sm" onClick={handleBulkArchive}>
+                <Archive className="mr-2 h-4 w-4" />
+                Archive
+              </Button>
+            )}
+            {userView === 'archived' && (
+              <>
+                <Button variant="outline" size="sm" onClick={handleBulkReactivate}>
+                  <UserCheck className="mr-2 h-4 w-4" />
+                  Reactivate
+                </Button>
+                <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </Button>
+              </>
+            )}
+            {userView === 'all' && (
+              <Button variant="outline" size="sm" onClick={handleBulkArchive}>
+                <Archive className="mr-2 h-4 w-4" />
+                Archive Selected
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Navigation Tabs */}
@@ -688,9 +1226,18 @@ export default function AdminDashboard() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>
+                  <input
+                    type="checkbox"
+                    checked={selectedUsers.length === filteredUsers.length && filteredUsers.length > 0}
+                    onChange={handleSelectAllUsers}
+                    className="rounded"
+                  />
+                </TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Programs</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Plagiarism Flags</TableHead>
                 <TableHead>Last Login</TableHead>
@@ -700,44 +1247,145 @@ export default function AdminDashboard() {
             <TableBody>
               {filteredUsers.map((user) => (
                 <TableRow key={user.id}>
-                  <TableCell className="font-medium">{user.name}</TableCell>
+            <TableCell>
+              <input
+                type="checkbox"
+                checked={selectedUsers.includes(user.id)}
+                onChange={() => handleSelectUser(user.id)}
+                disabled={user.role === 'administrator'}
+                className={`rounded ${user.role === 'administrator' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={user.role === 'administrator' ? 'Cannot select administrator accounts' : ''}
+              />
+            </TableCell>
+                  <TableCell className="font-medium">{user.firstName} {user.lastName}</TableCell>
                   <TableCell>{user.email}</TableCell>
                   <TableCell>{user.role}</TableCell>
                   <TableCell>
+                    {user.role === 'instructor' ? (
+                      <div className="text-xs text-gray-600">
+                        Programs assigned
+                      </div>
+                    ) : user.role === 'student' ? (
+                      <div className="text-xs text-gray-600">
+                        {user.programId ? 'Enrolled' : 'No program'}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-400">-</div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col space-y-1">
                     <Badge 
-                      variant={user.status === "Active" ? "default" : "destructive"}
-                      className={user.status === "Active" ? "bg-green-500 hover:bg-green-600" : ""}
+                        variant={user.isActive ? "default" : "destructive"}
+                        className={user.isActive ? "bg-green-500 hover:bg-green-600" : ""}
                     >
-                      {user.status}
+                        {user.isActive ? "Active" : "Inactive"}
                     </Badge>
+                      {user.isArchived && (
+                        <Badge variant="secondary" className="text-xs">
+                          Archived
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Badge 
-                      variant={user.plagiarismFlags > 0 ? "destructive" : "default"}
-                      className={user.plagiarismFlags === 0 ? "bg-green-500 hover:bg-green-600" : ""}
+                      variant="default"
+                      className="bg-green-500 hover:bg-green-600"
                     >
-                      {user.plagiarismFlags === 0 ? "None" : `${user.plagiarismFlags} Flag${user.plagiarismFlags > 1 ? 's' : ''}`}
+                      None
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{user.lastLogin}</TableCell>
+                  <TableCell className="text-muted-foreground">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</TableCell>
                   <TableCell className="text-right">
-                    <div className="flex items-center justify-end space-x-2">
+                    <div className="flex items-center justify-end space-x-1">
                       <Button 
                         variant="ghost" 
                         size="sm" 
                         data-testid={`button-edit-user-${user.id}`}
                         onClick={() => handleEditUser(user)}
+                        className="h-8 w-8 p-0"
                       >
                         <Edit className="h-4 w-4" />
                       </Button>
+                      {!user.isArchived ? (
+                        <>
+                          {/* Hide archive button for admin users */}
+                          {user.role !== 'administrator' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  const response = await fetch(`/api/users/${user.id}/archive`, {
+                                    method: 'PUT',
+                                  });
+                                  if (response.ok) {
+                                    showNotification('success', 'User archived successfully!');
+                                    refetchUsers();
+                                  } else {
+                                    const errorData = await response.json().catch(() => ({ error: 'Failed to archive user' }));
+                                    showNotification('error', errorData.error || 'Failed to archive user');
+                                  }
+                                } catch (error) {
+                                  showNotification('error', 'Error archiving user');
+                                }
+                              }}
+                              title="Archive User"
+                              className="h-8 w-8 p-0"
+                            >
+                              <Archive className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {/* Hide delete button for admin users */}
+                          {user.role !== 'administrator' && (
                       <Button 
                         variant="ghost" 
                         size="sm" 
                         data-testid={`button-delete-user-${user.id}`}
                         onClick={() => handleDeleteUser(user)}
+                              className="h-8 w-8 p-0"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const response = await fetch(`/api/users/${user.id}/reactivate`, {
+                                  method: 'PUT',
+                                });
+                                if (response.ok) {
+                                  showNotification('success', 'User reactivated successfully!');
+                                  refetchUsers();
+                                } else {
+                                  showNotification('error', 'Failed to reactivate user');
+                                }
+                              } catch (error) {
+                                showNotification('error', 'Error reactivating user');
+                              }
+                            }}
+                            title="Reactivate User"
+                            className="h-8 w-8 p-0"
+                          >
+                            <UserCheck className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            data-testid={`button-delete-user-${user.id}`}
+                            onClick={() => handleDeleteUser(user)}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1219,6 +1867,70 @@ export default function AdminDashboard() {
     </div>
   );
 
+  const renderProgramManagement = () => (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold">Program Management</h1>
+        <div className="flex items-center space-x-2">
+          <Button onClick={handleAddProgram} className="bg-blue-600 hover:bg-blue-700">
+            <Plus className="mr-2 h-4 w-4" />
+            Add New Program
+          </Button>
+        </div>
+      </div>
+
+      {/* Programs Table */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Program Name</TableHead>
+              <TableHead>Code</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {programs.map((program) => (
+              <TableRow key={program.id}>
+                <TableCell className="font-medium">{program.name}</TableCell>
+                <TableCell>{program.code}</TableCell>
+                <TableCell>{program.description || 'No description'}</TableCell>
+                <TableCell>
+                  <Badge variant={program.isActive ? "default" : "destructive"}>
+                    {program.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                </TableCell>
+                <TableCell>{new Date(program.createdAt).toLocaleDateString()}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex items-center justify-end space-x-2">
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleEditProgram(program)}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => handleDeleteProgram(program)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+
   const renderCourseManagement = () => (
     <div className="space-y-6">
       {/* Header */}
@@ -1233,10 +1945,139 @@ export default function AdminDashboard() {
             <Upload className="mr-2 h-4 w-4" />
             Import
           </Button>
+          <Dialog open={isCreateCourseModalOpen} onOpenChange={setIsCreateCourseModalOpen}>
+            <DialogTrigger asChild>
           <Button onClick={handleCreateCourse}>
             <Plus className="mr-2 h-4 w-4" />
             Create Course
           </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Create New Course</DialogTitle>
+                <DialogDescription>
+                  Set up a new course with all the necessary details.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label>Program</Label>
+                  <Select onValueChange={async (value) => {
+                    setCourseForm({...courseForm, programId: value, instructor: ""});
+                    setSelectedProgramForCourse(value);
+                    
+                    // Fetch instructors assigned to this program
+                    try {
+                      const response = await fetch(`/api/instructors?programId=${value}`);
+                      if (response.ok) {
+                        const instructors = await response.json();
+                        setProgramInstructors(instructors);
+                      } else {
+                        setProgramInstructors([]);
+                      }
+                    } catch (error) {
+                      console.error('Error fetching program instructors:', error);
+                      setProgramInstructors([]);
+                    }
+                  }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a program" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {programs.map((program) => (
+                        <SelectItem key={program.id} value={program.id}>
+                          {program.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+        </div>
+                <div>
+                  <Label htmlFor="courseName">Course Name</Label>
+                  <Input
+                    id="courseName"
+                    value={courseForm.name || ''}
+                    onChange={(e) => setCourseForm({...courseForm, name: e.target.value})}
+                    placeholder="Enter course name"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="courseCode">Course Code</Label>
+                  <Input
+                    id="courseCode"
+                    value={courseForm.code || ''}
+                    onChange={(e) => setCourseForm({...courseForm, code: e.target.value})}
+                    placeholder="e.g., CS101"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="instructor">Instructor</Label>
+                  <Select onValueChange={(value) => setCourseForm({...courseForm, instructor: value})} disabled={!selectedProgramForCourse}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={selectedProgramForCourse ? "Select an instructor" : "Select a program first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedProgramForCourse ? (
+                        (() => {
+                          // Get all instructors and filter by program assignment
+                          const allInstructors = users.filter(user => user.role === 'instructor');
+                          const assignedInstructors = allInstructors.filter(instructor => {
+                            // Check if instructor has assignedPrograms property and includes the selected program
+                            return instructor.assignedPrograms && instructor.assignedPrograms.includes(selectedProgramForCourse);
+                          });
+                          
+                          return assignedInstructors.length > 0 ? (
+                            assignedInstructors.map((instructor) => (
+                              <SelectItem key={instructor.id} value={instructor.id}>
+                                {instructor.firstName} {instructor.lastName}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="no-instructors" disabled>
+                              No instructors assigned to this program
+                            </SelectItem>
+                          );
+                        })()
+                      ) : (
+                        <SelectItem value="select-program-first" disabled>
+                          Please select a program first
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="section">Section</Label>
+                  <Input
+                    id="section"
+                    value={courseForm.section || 'A'}
+                    onChange={(e) => setCourseForm({...courseForm, section: e.target.value})}
+                    placeholder="A"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea
+                    id="description"
+                    value={courseForm.description || ''}
+                    onChange={(e) => setCourseForm({...courseForm, description: e.target.value})}
+                    placeholder="Enter course description"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => {
+                  setIsCreateCourseModalOpen(false);
+                  setSelectedProgramForCourse("");
+                }}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveCourse}>
+                  Create Course
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -1337,7 +2178,7 @@ export default function AdminDashboard() {
                 <TableRow key={course.id}>
                   <TableCell>
                     <div>
-                      <div className="font-medium">{course.name}</div>
+                      <div className="font-medium">{course.title}</div>
                       <div className="text-sm text-muted-foreground">{course.description}</div>
                     </div>
                   </TableCell>
@@ -1888,6 +2729,143 @@ export default function AdminDashboard() {
     </div>
   );
 
+  // Student Approval handlers
+  const handleApproveStudent = async (studentId: string) => {
+    try {
+      const response = await fetch(`/api/admin/students/${studentId}/approve`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ approvedBy: user?.id }),
+      });
+
+      if (response.ok) {
+        refetchPendingStudents();
+        refetchUsers(); // Refresh user list
+      } else {
+        const error = await response.json();
+        console.error('Failed to approve student:', error);
+      }
+    } catch (error) {
+      console.error('Error approving student:', error);
+    }
+  };
+
+  const handleRejectStudent = async (studentId: string) => {
+    try {
+      const response = await fetch(`/api/admin/students/${studentId}/reject`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ approvedBy: user?.id }),
+      });
+
+      if (response.ok) {
+        refetchPendingStudents();
+        refetchUsers(); // Refresh user list
+      } else {
+        const error = await response.json();
+        console.error('Failed to reject student:', error);
+      }
+    } catch (error) {
+      console.error('Error rejecting student:', error);
+    }
+  };
+
+  const renderStudentApproval = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Student Approval</h1>
+          <p className="text-muted-foreground">
+            Review and approve student registrations
+          </p>
+        </div>
+      </div>
+
+      {pendingStudentsLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading pending students...</p>
+          </div>
+        </div>
+      ) : pendingStudents.length === 0 ? (
+        <Card>
+          <CardContent className="flex items-center justify-center py-8">
+            <div className="text-center">
+              <UserCheck className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Pending Approvals</h3>
+              <p className="text-muted-foreground">
+                All student registrations have been reviewed.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4">
+          {pendingStudents.map((student: any) => (
+            <Card key={student.id}>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-4">
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                      <User className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold">
+                        {student.firstName} {student.lastName}
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        {student.email}
+                      </p>
+                      <div className="flex items-center space-x-4 mt-2">
+                        <Badge variant="secondary">
+                          Student ID: {student.studentId}
+                        </Badge>
+                        <Badge variant="outline">
+                          Year {student.yearLevel}
+                        </Badge>
+                        {student.program && (
+                          <Badge variant="outline">
+                            {student.program.name}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Registered: {new Date(student.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRejectStudent(student.id)}
+                      className="text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                    >
+                      <X className="h-4 w-4 mr-2" />
+                      Reject
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => handleApproveStudent(student.id)}
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Approve
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   const renderSettings = () => (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
@@ -1992,188 +2970,7 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        {/* Notification Preferences */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Bell className="h-5 w-5 mr-2" />
-              Notification Preferences
-            </CardTitle>
-            <CardDescription>
-              Choose how you want to be notified about system activities
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Email Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <Mail className="h-4 w-4 mr-2" />
-                Email Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="emailNotifications">Email Notifications</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Receive email notifications for system events</p>
-                  </div>
-                  <Switch
-                    id="emailNotifications"
-                    checked={notificationSettings.emailNotifications}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, emailNotifications: checked})}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="userRegistrations">User Registrations</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified when new users register</p>
-                  </div>
-                  <Switch
-                    id="userRegistrations"
-                    checked={notificationSettings.userRegistrations}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, userRegistrations: checked})}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="systemAlerts">System Alerts</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified about system maintenance and updates</p>
-                  </div>
-                  <Switch
-                    id="systemAlerts"
-                    checked={notificationSettings.systemAlerts}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, systemAlerts: checked})}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="securityAlerts">Security Alerts</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Get notified about security-related events</p>
-                  </div>
-                  <Switch
-                    id="securityAlerts"
-                    checked={notificationSettings.securityAlerts}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, securityAlerts: checked})}
-                  />
-                </div>
-              </div>
-            </div>
 
-            <Separator />
-
-            {/* Push Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Push Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="pushNotifications">Push Notifications</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Receive push notifications on your device</p>
-                  </div>
-                  <Switch
-                    id="pushNotifications"
-                    checked={notificationSettings.pushNotifications}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, pushNotifications: checked})}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Digest Notifications */}
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-3 flex items-center">
-                <Calendar className="h-4 w-4 mr-2" />
-                Digest Notifications
-              </h4>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="weeklyReports">Weekly Reports</Label>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Weekly summary of system activities and statistics</p>
-                  </div>
-                  <Switch
-                    id="weeklyReports"
-                    checked={notificationSettings.weeklyReports}
-                    onCheckedChange={(checked) => setNotificationSettings({...notificationSettings, weeklyReports: checked})}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <Button onClick={() => {/* Handle save notifications */}}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Notification Preferences
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Privacy Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Shield className="h-5 w-5 mr-2" />
-              Privacy Settings
-            </CardTitle>
-            <CardDescription>
-              Control your privacy and visibility
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="profileVisible">Profile Visibility</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Make your profile visible to other users</p>
-              </div>
-              <Switch
-                id="profileVisible"
-                checked={privacySettings.profileVisibility === "public"}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, profileVisibility: checked ? "public" : "private"})}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="showEmail">Show Email Address</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Display your email on your profile</p>
-              </div>
-              <Switch
-                id="showEmail"
-                checked={privacySettings.showEmail}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, showEmail: checked})}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="showActivity">Show Activity Status</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Display when you're online or offline</p>
-              </div>
-              <Switch
-                id="showActivity"
-                checked={privacySettings.showActivity}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, showActivity: checked})}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="allowMessages">Allow Messages</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Allow other users to message you</p>
-              </div>
-              <Switch
-                id="allowMessages"
-                checked={privacySettings.allowMessages}
-                onCheckedChange={(checked) => setPrivacySettings({...privacySettings, allowMessages: checked})}
-              />
-            </div>
-
-            <Button onClick={() => {/* Handle save privacy */}}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Privacy Settings
-            </Button>
-          </CardContent>
-        </Card>
 
         {/* Account Security */}
         <Card>
@@ -2351,128 +3148,6 @@ export default function AdminDashboard() {
             <span className="font-bold text-xl text-blue-600 dark:text-blue-400">CHECKmate</span>
             </div>
           <div className="ml-auto flex items-center space-x-2">
-            <Popover open={isNotificationsOpen} onOpenChange={setIsNotificationsOpen}>
-              <PopoverTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  data-testid="button-notifications"
-                  className="relative"
-                >
-                  <Bell className="h-5 w-5" />
-                  {notifications.filter(n => !n.isRead).length > 0 && (
-                    <span className="absolute -top-2 -right-2 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium z-10">
-                      {notifications.filter(n => !n.isRead).length}
-                    </span>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80 p-0" align="end">
-                <div className="p-4 border-b">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-lg flex items-center">
-                        <Bell className="h-5 w-5 mr-2" />
-                        System Notifications
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        Issues and alerts that need your attention
-                      </p>
-                    </div>
-                    {notifications.some(n => !n.isRead) && (
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={markAllAsRead}
-                        className="text-xs"
-                      >
-                        Mark all read
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {notifications.map((notification) => (
-                    <div 
-                      key={notification.id} 
-                      className={`p-3 border-b last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-800 ${
-                        notification.isRead 
-                          ? 'bg-background' 
-                          : 'bg-red-50 dark:bg-red-900/20'
-                      }`}
-                      data-testid={`notification-${notification.id}`}
-                      onClick={() => markNotificationAsRead(notification.id)}
-                    >
-                      <div className="flex items-start space-x-3">
-                        <div className="flex-shrink-0">
-                          {notification.type === 'error' && (
-                            <AlertTriangle className="h-5 w-5 text-red-500" />
-                          )}
-                          {notification.type === 'warning' && (
-                            <AlertTriangle className="h-5 w-5 text-yellow-500" />
-                          )}
-                          {notification.type === 'info' && (
-                            <CheckCircle className="h-5 w-5 text-blue-500" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                              {notification.title}
-                            </h4>
-                            <div className="flex items-center space-x-2">
-                              <span className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-                                <Clock className="h-3 w-3 mr-1" />
-                                {notification.timestamp}
-                              </span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteNotification(notification.id);
-                                }}
-                              >
-                                <X className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
-                            {notification.message}
-                          </p>
-                          <div className="flex items-center justify-between mt-2">
-                            <Badge 
-                              variant={
-                                notification.priority === 'high' ? 'destructive' : 
-                                notification.priority === 'medium' ? 'default' : 'secondary'
-                              }
-                              className="text-xs"
-                            >
-                              {notification.priority} priority
-                            </Badge>
-                            {!notification.isRead && (
-                              <Badge variant="outline" className="text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                                New
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="p-3 border-t bg-muted/50">
-                  <Button 
-                    size="sm" 
-                    className="w-full"
-                    onClick={() => {/* Handle mark all as read */}}
-                  >
-                    Mark All as Read
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
             <ThemeToggle />
           </div>
           </div>
@@ -2541,6 +3216,31 @@ export default function AdminDashboard() {
               {!isSidebarCollapsed && "User Management"}
             </Button>
             <Button
+              variant={selectedTab === 'student-approval' ? "default" : "ghost"}
+              className={`w-full ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-start'}`}
+              onClick={() => setSelectedTab('student-approval')}
+              data-testid="button-tab-student-approval"
+              title={isSidebarCollapsed ? "Student Approval" : ""}
+            >
+              <UserCheck className={`h-4 w-4 ${!isSidebarCollapsed ? 'mr-3' : ''}`} />
+              {!isSidebarCollapsed && "Student Approval"}
+              {!isSidebarCollapsed && pendingStudents.length > 0 && (
+                <Badge variant="destructive" className="ml-auto">
+                  {pendingStudents.length}
+                </Badge>
+              )}
+            </Button>
+            <Button
+              variant={selectedTab === 'programs' ? "default" : "ghost"}
+              className={`w-full ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-start'}`}
+                        onClick={() => setSelectedTab('programs')}
+                        data-testid="button-tab-programs"
+              title={isSidebarCollapsed ? "Program Management" : ""}
+            >
+              <BookOpen className={`h-4 w-4 ${!isSidebarCollapsed ? 'mr-3' : ''}`} />
+              {!isSidebarCollapsed && "Program Management"}
+            </Button>
+            <Button
               variant={selectedTab === 'courses' ? "default" : "ghost"}
               className={`w-full ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-start'}`}
                         onClick={() => setSelectedTab('courses')}
@@ -2597,6 +3297,8 @@ export default function AdminDashboard() {
               activeAdminTab === 'detection' && renderDetectionSettings() ||
               activeAdminTab === 'logs' && renderSystemLogs()
           )}
+          {selectedTab === 'student-approval' && renderStudentApproval()}
+          {selectedTab === 'programs' && renderProgramManagement()}
             {selectedTab === 'courses' && renderCourseManagement()}
           {selectedTab === 'reports' && renderReports()}
             {selectedTab === 'settings' && renderSettings()}
@@ -2604,23 +3306,46 @@ export default function AdminDashboard() {
             </main>
         </div>
 
+      {/* Notification */}
+      {notification.show && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg ${
+          notification.type === 'success' ? 'bg-green-500 text-white' :
+          notification.type === 'error' ? 'bg-red-500 text-white' :
+          'bg-blue-500 text-white'
+        }`}>
+          {notification.message}
+        </div>
+      )}
+
       {/* Add User Modal */}
-      <Dialog open={isAddUserModalOpen} onOpenChange={setIsAddUserModalOpen}>
+      <Dialog open={isAddUserModalOpen} onOpenChange={(open) => {
+        setIsAddUserModalOpen(open);
+        if (!open) resetUserForm();
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
+            <DialogTitle>Add New Instructor</DialogTitle>
             <DialogDescription>
-              Create a new user account in the system.
+              Create a new instructor account in the system.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="name">Full Name</Label>
+              <Label htmlFor="firstName">First Name</Label>
               <Input
-                id="name"
-                value={userForm.name}
-                onChange={(e) => setUserForm({...userForm, name: e.target.value})}
-                placeholder="Enter full name"
+                id="firstName"
+                value={userForm.firstName || ''}
+                onChange={(e) => setUserForm({...userForm, firstName: e.target.value})}
+                placeholder="Enter first name"
+              />
+            </div>
+            <div>
+              <Label htmlFor="lastName">Last Name</Label>
+              <Input
+                id="lastName"
+                value={userForm.lastName || ''}
+                onChange={(e) => setUserForm({...userForm, lastName: e.target.value})}
+                placeholder="Enter last name"
               />
       </div>
             <div>
@@ -2634,44 +3359,41 @@ export default function AdminDashboard() {
               />
             </div>
             <div>
-              <Label htmlFor="role">Role</Label>
-              <Select value={userForm.role} onValueChange={(value) => setUserForm({...userForm, role: value})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Student">Student</SelectItem>
-                  <SelectItem value="Professor">Professor</SelectItem>
-                  <SelectItem value="Admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="status">Status</Label>
-              <Select value={userForm.status} onValueChange={(value) => setUserForm({...userForm, status: value})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Active">Active</SelectItem>
-                  <SelectItem value="Inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="plagiarismFlags">Plagiarism Flags</Label>
+              <Label htmlFor="password">Password</Label>
               <Input
-                id="plagiarismFlags"
-                type="number"
-                min="0"
-                value={userForm.plagiarismFlags}
-                onChange={(e) => setUserForm({...userForm, plagiarismFlags: parseInt(e.target.value) || 0})}
-                placeholder="0"
+                id="password"
+                type="password"
+                value={userForm.password || ''}
+                onChange={(e) => setUserForm({...userForm, password: e.target.value})}
+                placeholder="Enter password"
               />
+            </div>
+            <div>
+              <Label>Assign to Programs</Label>
+              <div className="mt-2 space-y-2 max-h-32 overflow-y-auto border rounded-md p-2">
+                {programs.length === 0 ? (
+                  <p className="text-sm text-gray-500">No programs available</p>
+                ) : (
+                  programs.map((program) => (
+                    <label key={program.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={userForm.assignedPrograms.includes(program.id)}
+                        onChange={() => handleProgramToggle(program.id)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">{program.name}</span>
+                    </label>
+                  ))
+                )}
+              </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddUserModalOpen(false)}>
+            <Button variant="outline" onClick={() => {
+              setIsAddUserModalOpen(false);
+              resetUserForm();
+            }}>
               Cancel
             </Button>
             <Button onClick={handleSaveUser}>
@@ -2682,7 +3404,10 @@ export default function AdminDashboard() {
       </Dialog>
 
       {/* Edit User Modal */}
-      <Dialog open={isEditUserModalOpen} onOpenChange={setIsEditUserModalOpen}>
+      <Dialog open={isEditUserModalOpen} onOpenChange={(open) => {
+        setIsEditUserModalOpen(open);
+        if (!open) resetUserForm();
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Edit User</DialogTitle>
@@ -2692,12 +3417,21 @@ export default function AdminDashboard() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="edit-name">Full Name</Label>
+              <Label htmlFor="edit-firstName">First Name</Label>
               <Input
-                id="edit-name"
-                value={userForm.name}
-                onChange={(e) => setUserForm({...userForm, name: e.target.value})}
-                placeholder="Enter full name"
+                id="edit-firstName"
+                value={userForm.firstName}
+                onChange={(e) => setUserForm({...userForm, firstName: e.target.value})}
+                placeholder="Enter first name"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-lastName">Last Name</Label>
+              <Input
+                id="edit-lastName"
+                value={userForm.lastName}
+                onChange={(e) => setUserForm({...userForm, lastName: e.target.value})}
+                placeholder="Enter last name"
               />
             </div>
             <div>
@@ -2711,21 +3445,21 @@ export default function AdminDashboard() {
               />
             </div>
             <div>
-              <Label htmlFor="edit-role">Role</Label>
-              <Select value={userForm.role} onValueChange={(value) => setUserForm({...userForm, role: value})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Student">Student</SelectItem>
-                  <SelectItem value="Professor">Professor</SelectItem>
-                  <SelectItem value="Admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="edit-password">Password (leave blank to keep current)</Label>
+              <Input
+                id="edit-password"
+                type="password"
+                value={userForm.password}
+                onChange={(e) => setUserForm({...userForm, password: e.target.value})}
+                placeholder="Enter new password (optional)"
+              />
             </div>
             <div>
               <Label htmlFor="edit-status">Status</Label>
-              <Select value={userForm.status} onValueChange={(value) => setUserForm({...userForm, status: value})}>
+              <Select 
+                value={userForm.isActive ? "Active" : "Inactive"} 
+                onValueChange={(value) => setUserForm({...userForm, isActive: value === "Active"})}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -2735,20 +3469,36 @@ export default function AdminDashboard() {
                 </SelectContent>
               </Select>
             </div>
+          {selectedUser?.role === 'instructor' && (
             <div>
-              <Label htmlFor="edit-plagiarismFlags">Plagiarism Flags</Label>
-              <Input
-                id="edit-plagiarismFlags"
-                type="number"
-                min="0"
-                value={userForm.plagiarismFlags}
-                onChange={(e) => setUserForm({...userForm, plagiarismFlags: parseInt(e.target.value) || 0})}
-                placeholder="0"
-              />
+              <Label>Assign to Programs</Label>
+              <div className="mt-2 space-y-2 max-h-32 overflow-y-auto border rounded-md p-2">
+                {isLoadingInstructorPrograms ? (
+                  <p className="text-sm text-gray-500">Loading programs...</p>
+                ) : programs.length === 0 ? (
+                  <p className="text-sm text-gray-500">No programs available</p>
+                ) : (
+                  programs.map((program) => (
+                    <label key={program.id} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={userForm.assignedPrograms.includes(program.id)}
+                        onChange={() => handleProgramToggle(program.id)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">{program.name}</span>
+                    </label>
+                  ))
+                )}
             </div>
+            </div>
+          )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditUserModalOpen(false)}>
+            <Button variant="outline" onClick={() => {
+              setIsEditUserModalOpen(false);
+              resetUserForm();
+            }}>
               Cancel
             </Button>
             <Button onClick={handleSaveUser}>
@@ -2764,7 +3514,7 @@ export default function AdminDashboard() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the user account for {selectedUser?.name}.
+              This action cannot be undone. If the user has existing data (courses, assignments, etc.), they will be deactivated instead of deleted. This will permanently delete the user account for {selectedUser?.name}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2828,110 +3578,6 @@ export default function AdminDashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Course Modal */}
-      <Dialog open={isCreateCourseModalOpen} onOpenChange={setIsCreateCourseModalOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Create New Course</DialogTitle>
-            <DialogDescription>
-              Set up a new course with all the necessary details.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="course-name">Course Name</Label>
-                <Input
-                  id="course-name"
-                  value={courseForm.name}
-                  onChange={(e) => setCourseForm({...courseForm, name: e.target.value})}
-                  placeholder="Enter course name"
-                />
-              </div>
-              <div>
-                <Label htmlFor="course-code">Course Code</Label>
-                <Input
-                  id="course-code"
-                  value={courseForm.code}
-                  onChange={(e) => setCourseForm({...courseForm, code: e.target.value})}
-                  placeholder="e.g., CS101"
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="course-description">Description</Label>
-              <Textarea
-                id="course-description"
-                value={courseForm.description}
-                onChange={(e) => setCourseForm({...courseForm, description: e.target.value})}
-                placeholder="Enter course description"
-                rows={3}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="instructor">Instructor</Label>
-                <Input
-                  id="instructor"
-                  value={courseForm.instructor}
-                  onChange={(e) => setCourseForm({...courseForm, instructor: e.target.value})}
-                  placeholder="Instructor name"
-                />
-              </div>
-              <div>
-                <Label htmlFor="max-students">Max Students</Label>
-                <Input
-                  id="max-students"
-                  type="number"
-                  value={courseForm.maxStudents}
-                  onChange={(e) => setCourseForm({...courseForm, maxStudents: parseInt(e.target.value) || 50})}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="start-date">Start Date</Label>
-                <Input
-                  id="start-date"
-                  type="date"
-                  value={courseForm.startDate}
-                  onChange={(e) => setCourseForm({...courseForm, startDate: e.target.value})}
-                />
-              </div>
-              <div>
-                <Label htmlFor="end-date">End Date</Label>
-                <Input
-                  id="end-date"
-                  type="date"
-                  value={courseForm.endDate}
-                  onChange={(e) => setCourseForm({...courseForm, endDate: e.target.value})}
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="course-status">Status</Label>
-              <Select value={courseForm.status} onValueChange={(value) => setCourseForm({...courseForm, status: value})}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Draft">Draft</SelectItem>
-                  <SelectItem value="Published">Published</SelectItem>
-                  <SelectItem value="Archived">Archived</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateCourseModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveCourse}>
-              Create Course
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Edit Course Modal */}
       <Dialog open={isEditCourseModalOpen} onOpenChange={setIsEditCourseModalOpen}>
@@ -3042,7 +3688,7 @@ export default function AdminDashboard() {
       <Dialog open={isEnrollmentModalOpen} onOpenChange={setIsEnrollmentModalOpen}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Manage Enrollment - {selectedCourse?.name}</DialogTitle>
+            <DialogTitle>Manage Enrollment - {selectedCourse?.title}</DialogTitle>
             <DialogDescription>
               Manage student enrollments and instructor assignments for this course.
             </DialogDescription>
@@ -3050,67 +3696,67 @@ export default function AdminDashboard() {
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-6">
               <div>
-                <h3 className="font-medium mb-3">Enrolled Students ({selectedCourse?.enrolledStudents})</h3>
+                <h3 className="font-medium mb-3">Enrolled Students ({enrolledStudents.length})</h3>
                 <div className="border rounded-lg p-4 max-h-64 overflow-y-auto">
+                  {enrolledStudentsLoading ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto mb-2"></div>
+                        <p className="text-sm text-muted-foreground">Loading students...</p>
+                      </div>
+                    </div>
+                  ) : enrolledStudents.length === 0 ? (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-muted-foreground">No students enrolled yet</p>
+                    </div>
+                  ) : (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span className="text-sm">John Doe</span>
-                      <Button variant="ghost" size="sm">
+                      {enrolledStudents.map((enrollment: any) => (
+                        <div key={enrollment.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                          <div>
+                            <span className="text-sm font-medium">
+                              {enrollment.student?.firstName} {enrollment.student?.lastName}
+                            </span>
+                            <p className="text-xs text-muted-foreground">
+                              {enrollment.student?.studentId} • {enrollment.student?.email}
+                            </p>
+                    </div>
+                          <Button variant="ghost" size="sm" onClick={() => handleRemoveEnrollment(enrollment.id)}>
                         <UserMinus className="h-4 w-4" />
                       </Button>
                     </div>
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span className="text-sm">Jane Smith</span>
-                      <Button variant="ghost" size="sm">
-                        <UserMinus className="h-4 w-4" />
-                      </Button>
+                      ))}
                     </div>
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span className="text-sm">Mike Johnson</span>
-                      <Button variant="ghost" size="sm">
-                        <UserMinus className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  )}
                   </div>
-                </div>
-                <Button className="w-full mt-3">
-                  <UserPlus className="mr-2 h-4 w-4" />
-                  Add Students
-                </Button>
               </div>
               <div>
-                <h3 className="font-medium mb-3">Course Instructors</h3>
+                <h3 className="font-medium mb-3">Course Instructor</h3>
                 <div className="border rounded-lg p-4 max-h-64 overflow-y-auto">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <span className="text-sm">{selectedCourse?.instructor}</span>
-                      <Button variant="ghost" size="sm">
-                        <UserMinus className="h-4 w-4" />
-                      </Button>
+                  {instructorLoading ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary mx-auto mb-2"></div>
+                        <p className="text-sm text-muted-foreground">Loading instructor...</p>
                     </div>
                   </div>
+                  ) : !courseInstructor ? (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-muted-foreground">No instructor assigned</p>
                 </div>
-                <Button className="w-full mt-3">
-                  <UserPlus className="mr-2 h-4 w-4" />
-                  Add Instructor
-                </Button>
+                  ) : (
+                    <div className="p-2 bg-gray-50 rounded">
+                      <div>
+                        <span className="text-sm font-medium">
+                          {courseInstructor.instructor?.firstName} {courseInstructor.instructor?.lastName}
+                        </span>
+                        <p className="text-xs text-muted-foreground">
+                          {courseInstructor.instructor?.email}
+                        </p>
               </div>
             </div>
-            <div className="border-t pt-4">
-              <h3 className="font-medium mb-3">Bulk Actions</h3>
-              <div className="flex space-x-2">
-                <Button variant="outline" size="sm">
-                  <Download className="mr-2 h-4 w-4" />
-                  Export Roster
-                </Button>
-                <Button variant="outline" size="sm">
-                  <Upload className="mr-2 h-4 w-4" />
-                  Import Students
-                </Button>
-                <Button variant="outline" size="sm">
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Reset Course
-                </Button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -3279,6 +3925,122 @@ export default function AdminDashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Add Program Modal */}
+      <Dialog open={isAddProgramModalOpen} onOpenChange={setIsAddProgramModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add New Program</DialogTitle>
+            <DialogDescription>
+              Create a new academic program in the system.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="programName">Program Name</Label>
+              <Input
+                id="programName"
+                value={programForm.name}
+                onChange={(e) => setProgramForm({...programForm, name: e.target.value})}
+                placeholder="e.g., Bachelor of Science in Computer Studies"
+              />
+            </div>
+            <div>
+              <Label htmlFor="programCode">Program Code</Label>
+              <Input
+                id="programCode"
+                value={programForm.code}
+                onChange={(e) => setProgramForm({...programForm, code: e.target.value})}
+                placeholder="e.g., BSCS"
+              />
+            </div>
+            <div>
+              <Label htmlFor="programDescription">Description</Label>
+              <Textarea
+                id="programDescription"
+                value={programForm.description}
+                onChange={(e) => setProgramForm({...programForm, description: e.target.value})}
+                placeholder="Program description (optional)"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddProgramModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveProgram}>
+              Add Program
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Program Modal */}
+      <Dialog open={isEditProgramModalOpen} onOpenChange={setIsEditProgramModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Program</DialogTitle>
+            <DialogDescription>
+              Update the program information.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="editProgramName">Program Name</Label>
+              <Input
+                id="editProgramName"
+                value={programForm.name}
+                onChange={(e) => setProgramForm({...programForm, name: e.target.value})}
+                placeholder="e.g., Bachelor of Science in Computer Studies"
+              />
+            </div>
+            <div>
+              <Label htmlFor="editProgramCode">Program Code</Label>
+              <Input
+                id="editProgramCode"
+                value={programForm.code}
+                onChange={(e) => setProgramForm({...programForm, code: e.target.value})}
+                placeholder="e.g., BSCS"
+              />
+            </div>
+            <div>
+              <Label htmlFor="editProgramDescription">Description</Label>
+              <Textarea
+                id="editProgramDescription"
+                value={programForm.description}
+                onChange={(e) => setProgramForm({...programForm, description: e.target.value})}
+                placeholder="Program description (optional)"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditProgramModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveProgram}>
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Program Dialog */}
+      <AlertDialog open={isDeleteProgramDialogOpen} onOpenChange={setIsDeleteProgramDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Program</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{selectedProgram?.name}"? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDeleteProgram}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );

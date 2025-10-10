@@ -8,21 +8,43 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { BookOpen, Users, Plus, Settings, Trash2, Edit } from "lucide-react";
-import { insertCourseSchema, type Course, type InsertCourse } from "@shared/schema";
+import { BookOpen, Users, Plus, Settings, Trash2, Edit, FileText, Brain } from "lucide-react";
+import { insertCourseSchema, type Course, type InsertCourse, type Program, type User } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-// Mock instructor ID - will be replaced with actual authentication
-const MOCK_INSTRUCTOR_ID = "instructor-1";
 
 export default function CourseManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [managingCourse, setManagingCourse] = useState<Course | null>(null);
+  const [selectedProgramId, setSelectedProgramId] = useState<string>("");
   const { toast } = useToast();
+
+  // Fetch programs
+  const { data: programs = [], isLoading: programsLoading } = useQuery({
+    queryKey: ['programs'],
+    queryFn: () => apiRequest<Program[]>('/api/programs'),
+  });
+
+  // Fetch all instructors
+  const { data: allInstructors = [], isLoading: instructorsLoading } = useQuery({
+    queryKey: ['instructors'],
+    queryFn: () => apiRequest<User[]>('/api/users?role=instructor'),
+  });
+
+  // Fetch instructors for selected program
+  const { data: programInstructors = [] } = useQuery({
+    queryKey: ['instructors', selectedProgramId],
+    queryFn: () => {
+      if (!selectedProgramId) return [];
+      return apiRequest<User[]>(`/api/instructors?programId=${selectedProgramId}`);
+    },
+    enabled: !!selectedProgramId,
+  });
 
 
   // Create course form
@@ -33,7 +55,8 @@ export default function CourseManagement() {
       description: "",
       code: "",
       section: "A",
-      instructorId: MOCK_INSTRUCTOR_ID,
+      instructorId: "",
+      programId: "",
     },
   });
 
@@ -48,80 +71,28 @@ export default function CourseManagement() {
     },
   });
 
-  // Fetch instructor's courses
+  // Fetch all courses
   const { data: courses = [], isLoading } = useQuery({
-    queryKey: ['/api/courses/instructor', MOCK_INSTRUCTOR_ID],
-    enabled: false, // Disabled until backend is ready
-    initialData: [
-      {
-        id: "1",
-        title: "Introduction to Computer Science",
-        description: "A comprehensive introduction to programming concepts and computer science fundamentals.",
-        code: "CS101",
-        section: "A",
-        instructorId: MOCK_INSTRUCTOR_ID,
-        isActive: true,
-        createdAt: new Date("2024-01-15"),
-        updatedAt: new Date("2024-09-01"),
-      },
-      {
-        id: "2", 
-        title: "Data Structures and Algorithms",
-        description: "Advanced study of data structures, algorithms, and their applications in software development.",
-        code: "CS201",
-        section: "A",
-        instructorId: MOCK_INSTRUCTOR_ID,
-        isActive: true,
-        createdAt: new Date("2024-02-01"),
-        updatedAt: new Date("2024-08-15"),
-      },
-      {
-        id: "3",
-        title: "Data Structures and Algorithms",
-        description: "Advanced study of data structures, algorithms, and their applications in software development.",
-        code: "CS201",
-        section: "B",
-        instructorId: MOCK_INSTRUCTOR_ID,
-        isActive: true,
-        createdAt: new Date("2024-02-01"),
-        updatedAt: new Date("2024-08-15"),
-      },
-      {
-        id: "4",
-        title: "Web Development Fundamentals",
-        description: "Introduction to modern web development using HTML, CSS, JavaScript, and React.",
-        code: "CS301",
-        section: "A",
-        instructorId: MOCK_INSTRUCTOR_ID,
-        isActive: false,
-        createdAt: new Date("2024-03-01"),
-        updatedAt: new Date("2024-06-30"),
-      },
-    ],
+    queryKey: ['/api/courses'],
+    queryFn: () => apiRequest<Course[]>('/api/courses'),
   });
 
-  // Mock enrollment data
-  const { data: enrollmentData = {} } = useQuery({
-    queryKey: ['/api/courses/enrollments'],
-    enabled: false,
-    initialData: {
-      "1": 28,
-      "2": 22, 
-      "3": 15,
-    } as Record<string, number>,
-  });
+  // Enrollment data - will be fetched from API when enrollment endpoints are implemented
+  const enrollmentData: Record<string, number> = {};
 
   // Create course mutation
   const createCourseMutation = useMutation({
     mutationFn: async (courseData: InsertCourse) => {
-      // Mock API call - will be replaced with actual implementation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return { id: Date.now().toString(), ...courseData, isActive: true, createdAt: new Date(), updatedAt: new Date() };
+      return apiRequest<Course>('/api/courses', {
+        method: 'POST',
+        body: JSON.stringify(courseData),
+      });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/courses/instructor'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/courses'] });
       setIsCreateDialogOpen(false);
       createForm.reset();
+      setSelectedProgramId("");
       toast({
         title: "Course Created",
         description: "Your new course has been created successfully.",
@@ -139,12 +110,13 @@ export default function CourseManagement() {
   // Update course mutation
   const updateCourseMutation = useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Course> & { id: string }) => {
-      // Mock API call - will be replaced with actual implementation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return { id, ...updates, updatedAt: new Date() };
+      return apiRequest<Course>(`/api/courses/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+      });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/courses/instructor'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/courses'] });
       setEditingCourse(null);
       editForm.reset();
       toast({
@@ -164,12 +136,12 @@ export default function CourseManagement() {
   // Delete course mutation
   const deleteCourseMutation = useMutation({
     mutationFn: async (courseId: string) => {
-      // Mock API call - will be replaced with actual implementation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return { deleted: true, id: courseId };
+      return apiRequest(`/api/courses/${courseId}`, {
+        method: 'DELETE',
+      });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/courses/instructor'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/courses'] });
       toast({
         title: "Course Deleted",
         description: "Course has been deleted successfully.",
@@ -214,6 +186,17 @@ export default function CourseManagement() {
     setManagingCourse(course);
   };
 
+  const handleProgramChange = (programId: string) => {
+    setSelectedProgramId(programId);
+    createForm.setValue("programId", programId);
+    createForm.setValue("instructorId", ""); // Reset instructor selection
+  };
+
+  const resetCreateForm = () => {
+    createForm.reset();
+    setSelectedProgramId("");
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-96">
@@ -229,7 +212,10 @@ export default function CourseManagement() {
           <h1 className="text-3xl font-bold" data-testid="heading-course-management">Course Management</h1>
           <p className="text-muted-foreground">Create and manage your courses</p>
         </div>
-        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+        <Dialog open={isCreateDialogOpen} onOpenChange={(open) => {
+          setIsCreateDialogOpen(open);
+          if (!open) resetCreateForm();
+        }}>
           <DialogTrigger asChild>
             <Button data-testid="button-create-course">
               <Plus className="mr-2 h-4 w-4" />
@@ -240,20 +226,44 @@ export default function CourseManagement() {
             <DialogHeader>
               <DialogTitle>Create New Course</DialogTitle>
               <DialogDescription>
-                Add a new course to your teaching portfolio
+                Set up a new course with all the necessary details.
               </DialogDescription>
             </DialogHeader>
             <Form {...createForm}>
               <form onSubmit={createForm.handleSubmit(handleCreateCourse)} className="space-y-4">
                 <FormField
                   control={createForm.control}
+                  name="programId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Program</FormLabel>
+                      <Select onValueChange={handleProgramChange} value={selectedProgramId}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select a program" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {programs.map((program) => (
+                            <SelectItem key={program.id} value={program.id}>
+                              {program.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={createForm.control}
                   name="title"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Course Title</FormLabel>
+                      <FormLabel>Course Name</FormLabel>
                       <FormControl>
                         <Input 
-                          placeholder="Introduction to Computer Science" 
+                          placeholder="Enter course name" 
                           data-testid="input-course-title"
                           {...field} 
                         />
@@ -270,11 +280,47 @@ export default function CourseManagement() {
                       <FormLabel>Course Code</FormLabel>
                       <FormControl>
                         <Input 
-                          placeholder="CS101" 
+                          placeholder="e.g., CS101" 
                           data-testid="input-course-code"
                           {...field} 
                         />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={createForm.control}
+                  name="instructorId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Instructor</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value} disabled={!selectedProgramId}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder={selectedProgramId ? "Select an instructor" : "Select a program first"} />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {selectedProgramId ? (
+                            programInstructors.length > 0 ? (
+                              programInstructors.map((instructor) => (
+                                <SelectItem key={instructor.id} value={instructor.id}>
+                                  {instructor.firstName} {instructor.lastName}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectItem value="" disabled>
+                                No instructors assigned to this program
+                              </SelectItem>
+                            )
+                          ) : (
+                            <SelectItem value="" disabled>
+                              Please select a program first
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -304,7 +350,7 @@ export default function CourseManagement() {
                       <FormLabel>Description</FormLabel>
                       <FormControl>
                         <Textarea 
-                          placeholder="Course description and objectives..." 
+                          placeholder="Enter course description" 
                           data-testid="input-course-description"
                           {...field}
                           value={field.value || ""}
@@ -318,7 +364,10 @@ export default function CourseManagement() {
                   <Button 
                     type="button" 
                     variant="outline" 
-                    onClick={() => setIsCreateDialogOpen(false)}
+                    onClick={() => {
+                      setIsCreateDialogOpen(false);
+                      resetCreateForm();
+                    }}
                     data-testid="button-cancel-create"
                   >
                     Cancel
@@ -393,7 +442,14 @@ export default function CourseManagement() {
                   <CardTitle className="text-lg" data-testid={`text-course-title-${course.id}`}>
                     {course.title}
                   </CardTitle>
-                  <CardDescription>{course.code} - Section {course.section}</CardDescription>
+                  <CardDescription>
+                    {course.code} - Section {course.section}
+                    {course.programId && (
+                      <span className="block text-xs text-muted-foreground mt-1">
+                        Program: {programs.find(p => p.id === course.programId)?.name || 'Unknown Program'}
+                      </span>
+                    )}
+                  </CardDescription>
                 </div>
                 <Badge variant={course.isActive ? "default" : "secondary"}>
                   {course.isActive ? "Active" : "Inactive"}

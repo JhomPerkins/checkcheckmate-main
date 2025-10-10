@@ -8,6 +8,48 @@
       "when": 1758601986708,
       "tag": "0000_third_quicksilver",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1759857889600,
+      "tag": "0001_violet_gorilla_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1759859740534,
+      "tag": "0002_puzzling_marvel_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1759892108522,
+      "tag": "0003_heavy_sphinx",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1759897410688,
+      "tag": "0004_flimsy_senator_kelly",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1760015548874,
+      "tag": "0005_bizarre_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1760016877212,
+      "tag": "0006_foamy_infant_terrible",
+      "breakpoints": true
     }
   ]
 }

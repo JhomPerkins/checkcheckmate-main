@@ -19,15 +19,9 @@ import AnnouncementForm from "@/components/AnnouncementForm";
 import MaterialForm from "@/components/MaterialForm";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { insertAnnouncementSchema, insertMaterialSchema, type Announcement, type Material } from "@shared/schema";
+import { useUser } from "@/contexts/UserContext";
 
-// Mock user data - will be replaced with actual authentication
-const mockInstructor = {
-  id: "1",
-  firstName: "Dr. Maria",
-  lastName: "Martinez",
-  email: "maria.martinez@ollc.edu",
-  role: "instructor" as const,
-};
+// Real user data is now fetched from the database via UserContext
 
 // Edit schemas
 const editAnnouncementSchema = insertAnnouncementSchema.partial().pick({
@@ -48,113 +42,7 @@ const editMaterialSchema = insertMaterialSchema.partial().pick({
 type EditAnnouncementData = z.infer<typeof editAnnouncementSchema>;
 type EditMaterialData = z.infer<typeof editMaterialSchema>;
 
-// Mock courses for the forms
-const courses = [
-  { id: "cs201-a", code: "CS201", section: "A", title: "Data Structures and Algorithms" },
-  { id: "cs201-b", code: "CS201", section: "B", title: "Data Structures and Algorithms" },
-  { id: "cs401-a", code: "CS401", section: "A", title: "Machine Learning Fundamentals" },
-  { id: "cs201-web", code: "CS201", section: "Web", title: "Web Development Fundamentals" },
-  { id: "cs302-a", code: "CS302", section: "A", title: "Database Systems" },
-];
-
-// Mock data for announcements and materials
-const mockAnnouncements = [
-  {
-    id: "1",
-    title: "Midterm Exam Schedule",
-    content: "The midterm exam for CS201 will be held on November 15th at 2:00 PM in Room 101. Please bring your student ID and a calculator.",
-    courseId: "cs201-a",
-    courseCode: "CS201 - Section A",
-    courseTitle: "Data Structures and Algorithms",
-    isImportant: true,
-    createdBy: "1",
-    createdAt: "2024-10-15T10:00:00Z",
-    updatedAt: "2024-10-15T10:00:00Z",
-  },
-  {
-    id: "2",
-    title: "Assignment 3 Extension",
-    content: "Due to the technical issues with the submission system, Assignment 3 deadline has been extended to November 20th.",
-    courseId: "cs401-a",
-    courseCode: "CS401 - Section A",
-    courseTitle: "Machine Learning Fundamentals",
-    isImportant: false,
-    createdBy: "1",
-    createdAt: "2024-10-12T14:30:00Z",
-    updatedAt: "2024-10-12T14:30:00Z",
-  },
-  {
-    id: "3",
-    title: "Office Hours Update",
-    content: "My office hours for this week have changed to Tuesday and Thursday 2-4 PM due to a conference.",
-    courseId: "cs302-a",
-    courseCode: "CS302 - Section A",
-    courseTitle: "Database Systems",
-    isImportant: false,
-    createdBy: "1",
-    createdAt: "2024-10-10T09:15:00Z",
-    updatedAt: "2024-10-10T09:15:00Z",
-  },
-];
-
-const mockMaterials = [
-  {
-    id: "1",
-    title: "Introduction to Binary Trees",
-    description: "Comprehensive guide to binary tree data structures and their operations",
-    courseId: "cs201-a",
-    courseCode: "CS201 - Section A",
-    courseTitle: "Data Structures and Algorithms",
-    type: "lesson",
-    content: "Binary trees are hierarchical data structures where each node has at most two children...",
-    isPublished: true,
-    createdBy: "1",
-    createdAt: "2024-10-14T11:00:00Z",
-    updatedAt: "2024-10-14T11:00:00Z",
-  },
-  {
-    id: "2",
-    title: "Machine Learning Algorithms Reference",
-    description: "Quick reference guide for common ML algorithms",
-    courseId: "cs401-a",
-    courseCode: "CS401 - Section A",
-    courseTitle: "Machine Learning Fundamentals",
-    type: "resource",
-    content: "This resource covers supervised learning algorithms including linear regression, decision trees, and neural networks...",
-    isPublished: true,
-    createdBy: "1",
-    createdAt: "2024-10-13T16:20:00Z",
-    updatedAt: "2024-10-13T16:20:00Z",
-  },
-  {
-    id: "3",
-    title: "Database Design Best Practices",
-    description: "Video tutorial on database normalization and design principles",
-    courseId: "cs302-a",
-    courseCode: "CS302 - Section A",
-    courseTitle: "Database Systems",
-    type: "video",
-    content: "This video covers the fundamentals of database design including normalization forms and relationship modeling...",
-    isPublished: false,
-    createdBy: "1",
-    createdAt: "2024-10-11T13:45:00Z",
-    updatedAt: "2024-10-11T13:45:00Z",
-  },
-  {
-    id: "4",
-    title: "React Documentation",
-    description: "Official React documentation for web development course",
-    courseId: "cs201-web",
-    courseCode: "CS201 - Section Web",
-    courseTitle: "Web Development Fundamentals",
-    type: "link",
-    externalUrl: "https://react.dev/",
-    isPublished: true,
-    createdBy: "1",
-    createdAt: "2024-10-09T08:30:00Z",
-    updatedAt: "2024-10-09T08:30:00Z",
-  },
-];
+// Real data will be fetched from the database
 
 const materialTypeIcons = {
   lesson: BookOpen,
@@ -165,6 +53,7 @@ const materialTypeIcons = {
 };
 
 export default function InstructorContentManagement() {
+  const { user } = useUser();
   const [announcementSearch, setAnnouncementSearch] = useState("");
   const [materialSearch, setMaterialSearch] = useState("");
   const [announcementFilter, setAnnouncementFilter] = useState<"all" | "important" | "recent">("all");
@@ -178,6 +67,51 @@ export default function InstructorContentManagement() {
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Fetch instructor's courses
+  const { data: teachingCourses = [], isLoading: coursesLoading } = useQuery({
+    queryKey: ['/api/courses/instructor', user?.id],
+    queryFn: () => apiRequest(`/api/courses/instructor/${user?.id}`),
+    enabled: !!user?.id,
+  });
+
+  // Fetch all announcements for instructor's courses
+  const { data: allAnnouncements = [], isLoading: announcementsLoading, error: announcementsError } = useQuery({
+    queryKey: ['/api/announcements/instructor', user?.id],
+    queryFn: async () => {
+      const courseIds = teachingCourses.map(course => course.id);
+      const announcements = [];
+      for (const courseId of courseIds) {
+        try {
+          const courseAnnouncements = await apiRequest(`/api/announcements/course/${courseId}`);
+          announcements.push(...courseAnnouncements);
+        } catch (error) {
+          console.error(`Failed to fetch announcements for course ${courseId}:`, error);
+        }
+      }
+      return announcements;
+    },
+    enabled: teachingCourses.length > 0,
+  });
+
+  // Fetch all materials for instructor's courses
+  const { data: allMaterials = [], isLoading: materialsLoading, error: materialsError } = useQuery({
+    queryKey: ['/api/materials/instructor', user?.id],
+    queryFn: async () => {
+      const courseIds = teachingCourses.map(course => course.id);
+      const materials = [];
+      for (const courseId of courseIds) {
+        try {
+          const courseMaterials = await apiRequest(`/api/materials/course/${courseId}`);
+          materials.push(...courseMaterials);
+        } catch (error) {
+          console.error(`Failed to fetch materials for course ${courseId}:`, error);
+        }
+      }
+      return materials;
+    },
+    enabled: teachingCourses.length > 0,
+  });
 
   // Edit announcement form
   const editAnnouncementForm = useForm<EditAnnouncementData>({
@@ -202,50 +136,6 @@ export default function InstructorContentManagement() {
     },
   });
 
-  // Fetch instructor's courses
-  const { data: teachingCourses = [], isLoading: coursesLoading } = useQuery({
-    queryKey: ['/api/courses/instructor', mockInstructor.id],
-    queryFn: () => apiRequest(`/api/courses/instructor/${mockInstructor.id}`),
-    enabled: true,
-  });
-
-  // Fetch all announcements for instructor's courses
-  const { data: allAnnouncements = [], isLoading: announcementsLoading, error: announcementsError } = useQuery({
-    queryKey: ['/api/announcements/instructor', mockInstructor.id],
-    queryFn: async () => {
-      const courseIds = teachingCourses.map(course => course.id);
-      const announcements = [];
-      for (const courseId of courseIds) {
-        try {
-          const courseAnnouncements = await apiRequest(`/api/announcements/course/${courseId}`);
-          announcements.push(...courseAnnouncements);
-        } catch (error) {
-          console.error(`Failed to fetch announcements for course ${courseId}:`, error);
-        }
-      }
-      return announcements;
-    },
-    enabled: teachingCourses.length > 0,
-  });
-
-  // Fetch all materials for instructor's courses
-  const { data: allMaterials = [], isLoading: materialsLoading, error: materialsError } = useQuery({
-    queryKey: ['/api/materials/instructor', mockInstructor.id],
-    queryFn: async () => {
-      const courseIds = teachingCourses.map(course => course.id);
-      const materials = [];
-      for (const courseId of courseIds) {
-        try {
-          const courseMaterials = await apiRequest(`/api/materials/course/${courseId}`);
-          materials.push(...courseMaterials);
-        } catch (error) {
-          console.error(`Failed to fetch materials for course ${courseId}:`, error);
-        }
-      }
-      return materials;
-    },
-    enabled: teachingCourses.length > 0,
-  });
 
   // Mutations for announcements
   const updateAnnouncementMutation = useMutation({
@@ -310,11 +200,11 @@ export default function InstructorContentManagement() {
   });
 
   const handleAnnouncementCreated = (announcement: any) => {
-    queryClient.invalidateQueries({ queryKey: ['/api/announcements/instructor', mockInstructor.id] });
+    queryClient.invalidateQueries({ queryKey: ['/api/announcements/instructor', user?.id] });
   };
 
   const handleMaterialCreated = (material: any) => {
-    queryClient.invalidateQueries({ queryKey: ['/api/materials/instructor', mockInstructor.id] });
+    queryClient.invalidateQueries({ queryKey: ['/api/materials/instructor', user?.id] });
   };
 
   const handleDeleteAnnouncement = (id: string) => {
@@ -454,7 +344,7 @@ export default function InstructorContentManagement() {
                 <p className="text-muted-foreground">Share important updates with your students</p>
               </div>
               <AnnouncementForm 
-                courses={courses}
+                courses={teachingCourses}
                 onAnnouncementCreated={handleAnnouncementCreated}
               />
             </div>
@@ -545,7 +435,7 @@ export default function InstructorContentManagement() {
                     <p className="text-muted-foreground mb-4">
                       There was an error loading announcements. Please try again later.
                     </p>
-                    <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/announcements/instructor', mockInstructor.id] })}>
+                    <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/announcements/instructor', user?.id] })}>
                       Retry
                     </Button>
                   </CardContent>
@@ -655,7 +545,7 @@ export default function InstructorContentManagement() {
                 <p className="text-muted-foreground">Share lessons, resources, and materials with your students</p>
               </div>
               <MaterialForm 
-                courses={courses}
+                courses={teachingCourses}
                 onMaterialCreated={handleMaterialCreated}
               />
             </div>
@@ -760,7 +650,7 @@ export default function InstructorContentManagement() {
                     <p className="text-muted-foreground mb-4">
                       There was an error loading materials. Please try again later.
                     </p>
-                    <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/materials/instructor', mockInstructor.id] })}>
+                    <Button onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/materials/instructor', user?.id] })}>
                       Retry
                     </Button>
                   </CardContent>
