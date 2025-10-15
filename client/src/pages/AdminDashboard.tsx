@@ -15,8 +15,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Users, BookOpen, FileText, Settings, TrendingUp, Shield, User, Plus, LogOut, ChevronLeft, ChevronRight, Search, Edit, Trash2, Lock, Eye, FileText as FileTextIcon, X, Camera, Save, Mail, MessageSquare, Calendar, Bell, AlertTriangle, CheckCircle, Clock, Archive, Download, Upload, Filter, SortAsc, SortDesc, MoreHorizontal, UserPlus, UserMinus, Copy, RefreshCw, BarChart3, PieChart, Activity, Target, Award, Clock3, TrendingDown, UserCheck, BookOpenCheck, GraduationCap } from "lucide-react";
+import { Users, BookOpen, FileText, Settings, TrendingUp, Shield, User, Plus, LogOut, ChevronLeft, ChevronRight, Search, Edit, Trash2, Lock, Eye, FileText as FileTextIcon, X, Camera, Save, Mail, MessageSquare, Calendar, Bell, AlertTriangle, CheckCircle, Clock, Archive, Download, Upload, Filter, SortAsc, SortDesc, MoreHorizontal, UserPlus, UserMinus, Copy, RefreshCw, BarChart3, PieChart, Activity, Target, Award, Clock3, TrendingDown, UserCheck, BookOpenCheck, GraduationCap, Brain } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import { LLMManager } from "@/components/LLMManager";
 
 // Mock user data - will be replaced with actual authentication
 const mockAdmin = {
@@ -41,6 +42,7 @@ export default function AdminDashboard() {
   const [roleFilter, setRoleFilter] = useState("All Roles");
   const [statusFilter, setStatusFilter] = useState("All Status");
   const [activeAdminTab, setActiveAdminTab] = useState<'users' | 'permissions' | 'detection' | 'logs'>('users');
+  const [isAIAnalyticsOpen, setIsAIAnalyticsOpen] = useState(false);
   
   // Fetch pending students for approval
   const { data: pendingStudents = [], isLoading: pendingStudentsLoading, refetch: refetchPendingStudents } = useQuery({
@@ -216,7 +218,9 @@ export default function AdminDashboard() {
       const response = await fetch('/api/courses');
       if (!response.ok) throw new Error('Failed to fetch courses');
       return response.json();
-    }
+    },
+    refetchInterval: 30000, // Refetch every 30 seconds to ensure fresh data
+    staleTime: 10000, // Consider data stale after 10 seconds
   });
 
   const [courseSearchQuery, setCourseSearchQuery] = useState("");
@@ -224,6 +228,9 @@ export default function AdminDashboard() {
   const [isEditCourseModalOpen, setIsEditCourseModalOpen] = useState(false);
   const [isEnrollmentModalOpen, setIsEnrollmentModalOpen] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<any>(null);
+  const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false);
+  const [availableStudents, setAvailableStudents] = useState<any[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
 
   // Fetch enrolled students for selected course
   const { data: enrolledStudents = [], isLoading: enrolledStudentsLoading } = useQuery({
@@ -247,6 +254,18 @@ export default function AdminDashboard() {
       return response.json();
     },
     enabled: !!selectedCourse?.id,
+  });
+
+  // Fetch available students (not enrolled in the selected course)
+  const { data: allStudents = [], isLoading: studentsLoading } = useQuery({
+    queryKey: ['available-students', selectedCourse?.id],
+    queryFn: async () => {
+      if (!selectedCourse?.id) return [];
+      const response = await fetch(`/api/students/available?courseId=${selectedCourse.id}`);
+      if (!response.ok) throw new Error('Failed to fetch available students');
+      return response.json();
+    },
+    enabled: !!selectedCourse?.id && isAddStudentModalOpen,
   });
 
   const [courseForm, setCourseForm] = useState({
@@ -957,21 +976,56 @@ export default function AdminDashboard() {
 
   const handleArchiveCourse = async (course: any) => {
     try {
-      const response = await fetch(`/api/courses/${course.id}`, {
+      const response = await fetch(`/api/courses/${course.id}/archive`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: false })
       });
       
       if (response.ok) {
         showNotification('success', 'Course archived successfully!');
-        refetchCourses();
+        queryClient.invalidateQueries({ queryKey: ['courses'] });
       } else {
         showNotification('error', 'Failed to archive course');
       }
     } catch (error) {
       console.error('Error archiving course:', error);
       showNotification('error', 'Error archiving course');
+    }
+  };
+
+  const handleUnarchiveCourse = async (course: any) => {
+    try {
+      const response = await fetch(`/api/courses/${course.id}/unarchive`, {
+        method: 'PUT',
+      });
+      
+      if (response.ok) {
+        showNotification('success', 'Course unarchived successfully!');
+        queryClient.invalidateQueries({ queryKey: ['courses'] });
+      } else {
+        showNotification('error', 'Failed to unarchive course');
+      }
+    } catch (error) {
+      console.error('Error unarchiving course:', error);
+      showNotification('error', 'Error unarchiving course');
+    }
+  };
+
+  const handleToggleCourseStatus = async (course: any) => {
+    try {
+      const response = await fetch(`/api/courses/${course.id}/toggle-status`, {
+        method: 'PUT',
+      });
+      
+      if (response.ok) {
+        const newStatus = course.isActive ? 'Inactive' : 'Active';
+        showNotification('success', `Course status changed to ${newStatus}!`);
+        queryClient.invalidateQueries({ queryKey: ['courses'] });
+      } else {
+        showNotification('error', 'Failed to update course status');
+      }
+    } catch (error) {
+      console.error('Error toggling course status:', error);
+      showNotification('error', 'Error updating course status');
     }
   };
 
@@ -999,6 +1053,42 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleAddStudentsToCourse = async () => {
+    if (selectedStudents.length === 0) {
+      showNotification('error', 'Please select at least one student to add');
+      return;
+    }
+
+    try {
+      const promises = selectedStudents.map(studentId =>
+        fetch('/api/enrollments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            courseId: selectedCourse.id,
+            studentId: studentId
+          })
+        })
+      );
+
+      const responses = await Promise.all(promises);
+      const failed = responses.filter(response => !response.ok);
+
+      if (failed.length === 0) {
+        showNotification('success', `${selectedStudents.length} student(s) added to course successfully`);
+        setSelectedStudents([]);
+        setIsAddStudentModalOpen(false);
+        // Refresh the enrolled students list
+        queryClient.invalidateQueries({ queryKey: ['enrolled-students', selectedCourse?.id] });
+      } else {
+        showNotification('error', `Failed to add ${failed.length} student(s) to the course`);
+      }
+    } catch (error) {
+      console.error('Error adding students to course:', error);
+      showNotification('error', 'Error adding students to course');
+    }
+  };
+
 
   // Filter courses based on search and filters
   const filteredCourses = courses.filter(course => {
@@ -1013,7 +1103,10 @@ export default function AdminDashboard() {
     const matchesSearch = courseName.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
                          courseCode.toLowerCase().includes(courseSearchQuery.toLowerCase()) ||
                          instructorName.toLowerCase().includes(courseSearchQuery.toLowerCase());
-    const matchesStatus = courseStatusFilter === "All Status" || course.status === courseStatusFilter;
+    const matchesStatus = courseStatusFilter === "All Status" || 
+      (courseStatusFilter === "Active" && course.isActive && !course.isArchived) ||
+      (courseStatusFilter === "Inactive" && !course.isActive && !course.isArchived) ||
+      (courseStatusFilter === "Archived" && course.isArchived);
     
     return matchesSearch && matchesStatus;
   });
@@ -1037,6 +1130,24 @@ export default function AdminDashboard() {
       return response.json();
     },
     refetchInterval: 30000, // Refetch every 30 seconds for real-time data
+  });
+
+  // AI Analytics data
+  const { data: aiAnalytics = {
+    totalSubmissions: 0,
+    aiGradedSubmissions: 0,
+    aiUsagePercentage: 0,
+    avgConfidence: 0,
+    avgProcessingTime: 0,
+    plagiarismDetected: 0,
+  }, isLoading: aiAnalyticsLoading } = useQuery({
+    queryKey: ['/api/admin/ai-analytics'],
+    queryFn: async () => {
+      const response = await fetch('/api/admin/ai-analytics');
+      if (!response.ok) throw new Error('Failed to fetch AI analytics');
+      return response.json();
+    },
+    enabled: isAIAnalyticsOpen, // Only fetch when modal is open
   });
 
   const { data: recentActivity = [] } = useQuery({
@@ -1515,195 +1626,285 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Access Controls</CardTitle>
-            <CardDescription>Configure system-wide access settings</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Require 2FA</span>
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="2fa" defaultChecked />
-                  <Label htmlFor="2fa">Enabled</Label>
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Session Timeout</span>
-                <Select defaultValue="30">
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="15">15 min</SelectItem>
-                    <SelectItem value="30">30 min</SelectItem>
-                    <SelectItem value="60">1 hour</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">IP Restrictions</span>
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="ip-restrict" />
-                  <Label htmlFor="ip-restrict">Enabled</Label>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );
 
-  const renderDetectionSettings = () => (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Detection Settings</h1>
-        <div className="flex items-center space-x-2">
-          <Button variant="outline" data-testid="button-system-settings" onClick={handleSystemSettings}>
-            <Settings className="mr-2 h-4 w-4" />
-            System Settings
+  // Fetch AI configuration
+  const { data: aiConfig = {}, isLoading: configLoading } = useQuery({
+    queryKey: ['/api/admin/ai-config'],
+    queryFn: async () => {
+      const response = await fetch('/api/admin/ai-config');
+      if (!response.ok) throw new Error('Failed to fetch AI config');
+      return response.json();
+    },
+    enabled: activeAdminTab === 'detection', // Only fetch when detection tab is active
+  });
+
+  // Fetch real AI statistics for detection settings
+  const { data: detectionAiStats = {
+    totalSubmissions: 0,
+    aiGradedSubmissions: 0,
+    aiUsagePercentage: 0,
+    avgConfidence: 0,
+    avgProcessingTime: 0,
+    plagiarismDetected: 0,
+  }, isLoading: detectionStatsLoading } = useQuery({
+    queryKey: ['/api/admin/ai-analytics-detection'],
+    queryFn: async () => {
+      const response = await fetch('/api/admin/ai-analytics');
+      if (!response.ok) throw new Error('Failed to fetch AI analytics');
+      return response.json();
+    },
+    enabled: activeAdminTab === 'detection', // Only fetch when detection tab is active
+  });
+
+  const renderDetectionSettings = () => {
+
+    const updateConfig = async (key: string, value: string) => {
+      try {
+        const response = await fetch(`/api/admin/ai-config/${key}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+        
+        if (!response.ok) throw new Error('Failed to update config');
+        
+        // Refetch config
+        queryClient.invalidateQueries({ queryKey: ['/api/admin/ai-config'] });
+        
+        toast({
+          title: "Configuration Updated",
+          description: "AI settings have been updated successfully.",
+        });
+      } catch (error) {
+        toast({
+          title: "Update Failed",
+          description: "Failed to update AI configuration. Please try again.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    const resetToDefaults = async () => {
+      try {
+        const response = await fetch('/api/admin/ai-config/reset', {
+          method: 'POST',
+        });
+        
+        if (!response.ok) throw new Error('Failed to reset config');
+        
+        // Refetch config
+        queryClient.invalidateQueries({ queryKey: ['/api/admin/ai-config'] });
+        
+        toast({
+          title: "Configuration Reset",
+          description: "AI settings have been reset to defaults.",
+        });
+      } catch (error) {
+        toast({
+          title: "Reset Failed",
+          description: "Failed to reset AI configuration. Please try again.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold">AI Configuration</h1>
+          <div className="flex items-center space-x-2">
+            <Button variant="outline" onClick={resetToDefaults}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Reset to Defaults
+            </Button>
+            <Button variant="outline" data-testid="button-system-settings" onClick={handleSystemSettings}>
+              <Settings className="mr-2 h-4 w-4" />
+              System Settings
+            </Button>
+          </div>
+        </div>
+
+        {/* Navigation Tabs */}
+        <div className="flex space-x-1 border-b">
+          <Button
+            variant={activeAdminTab === 'users' ? "default" : "ghost"}
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
+            onClick={() => handleTabChange('users')}
+          >
+            <Users className="mr-2 h-4 w-4" />
+            User Management
           </Button>
-          <Button data-testid="button-test-detection">
+          <Button
+            variant={activeAdminTab === 'permissions' ? "default" : "ghost"}
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
+            onClick={() => handleTabChange('permissions')}
+          >
+            <Lock className="mr-2 h-4 w-4" />
+            Permissions & Access
+          </Button>
+          <Button
+            variant={activeAdminTab === 'detection' ? "default" : "ghost"}
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
+            onClick={() => handleTabChange('detection')}
+          >
             <Eye className="mr-2 h-4 w-4" />
-            Test Detection
+            AI Configuration
+          </Button>
+          <Button
+            variant={activeAdminTab === 'logs' ? "default" : "ghost"}
+            className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
+            onClick={() => handleTabChange('logs')}
+          >
+            <FileTextIcon className="mr-2 h-4 w-4" />
+            System Logs
           </Button>
         </div>
-      </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex space-x-1 border-b">
-        <Button
-          variant={activeAdminTab === 'users' ? "default" : "ghost"}
-          className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
-          onClick={() => handleTabChange('users')}
-        >
-          <Users className="mr-2 h-4 w-4" />
-          User Management
-        </Button>
-        <Button
-          variant={activeAdminTab === 'permissions' ? "default" : "ghost"}
-          className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
-          onClick={() => handleTabChange('permissions')}
-        >
-          <Lock className="mr-2 h-4 w-4" />
-          Permissions & Access
-        </Button>
-        <Button
-          variant={activeAdminTab === 'detection' ? "default" : "ghost"}
-          className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
-          onClick={() => handleTabChange('detection')}
-        >
-          <Eye className="mr-2 h-4 w-4" />
-          Detection Settings
-        </Button>
-        <Button
-          variant={activeAdminTab === 'logs' ? "default" : "ghost"}
-          className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary"
-          onClick={() => handleTabChange('logs')}
-        >
-          <FileTextIcon className="mr-2 h-4 w-4" />
-          System Logs
-        </Button>
-      </div>
-
-      {/* Detection Settings Content */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Plagiarism Detection</CardTitle>
-            <CardDescription>Configure plagiarism detection algorithms</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Detection Sensitivity</span>
-                <Select defaultValue="medium">
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low (60%)</SelectItem>
-                    <SelectItem value="medium">Medium (80%)</SelectItem>
-                    <SelectItem value="high">High (95%)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Auto-flag Threshold</span>
-                <Input type="number" defaultValue="85" className="w-20" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Check External Sources</span>
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="external-check" defaultChecked />
-                  <Label htmlFor="external-check">Enabled</Label>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>AI Grading Settings</CardTitle>
-            <CardDescription>Configure AI-powered grading features</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Auto-grading</span>
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="auto-grade" defaultChecked />
-                  <Label htmlFor="auto-grade">Enabled</Label>
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Confidence Threshold</span>
-                <Input type="number" defaultValue="75" className="w-20" />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Human Review Required</span>
-                <div className="flex items-center space-x-2">
-                  <input type="checkbox" id="human-review" defaultChecked />
-                  <Label htmlFor="human-review">Enabled</Label>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Detection Statistics</CardTitle>
-          <CardDescription>Current detection performance metrics</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">94.2%</div>
-              <p className="text-sm text-muted-foreground">Accuracy Rate</p>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">1,247</div>
-              <p className="text-sm text-muted-foreground">Documents Scanned</p>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">23</div>
-              <p className="text-sm text-muted-foreground">Flags This Week</p>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-purple-600">2.1s</div>
-              <p className="text-sm text-muted-foreground">Avg. Processing Time</p>
-            </div>
+        {configLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <span className="ml-2">Loading AI configuration...</span>
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+        ) : (
+          <>
+            {/* AI Configuration Content */}
+            <div className="grid gap-6 md:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Plagiarism Detection</CardTitle>
+                  <CardDescription>Configure plagiarism detection algorithms</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Detection Sensitivity</span>
+                      <Select 
+                        value={aiConfig.plagiarism_sensitivity || 'medium'} 
+                        onValueChange={(value) => updateConfig('plagiarism_sensitivity', value)}
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="low">Low (60%)</SelectItem>
+                          <SelectItem value="medium">Medium (80%)</SelectItem>
+                          <SelectItem value="high">High (95%)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Auto-flag Threshold</span>
+                      <Input 
+                        type="number" 
+                        value={aiConfig.plagiarism_threshold || 85} 
+                        className="w-20"
+                        onChange={(e) => updateConfig('plagiarism_threshold', e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Check External Sources</span>
+                      <div className="flex items-center space-x-2">
+                        <input 
+                          type="checkbox" 
+                          id="external-check" 
+                          checked={aiConfig.check_external_sources || false}
+                          onChange={(e) => updateConfig('check_external_sources', e.target.checked.toString())}
+                        />
+                        <Label htmlFor="external-check">Enabled</Label>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>AI Grading Settings</CardTitle>
+                  <CardDescription>Configure AI-powered grading features</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Auto-grading</span>
+                      <div className="flex items-center space-x-2">
+                        <input 
+                          type="checkbox" 
+                          id="auto-grade" 
+                          checked={aiConfig.auto_grading_enabled || false}
+                          onChange={(e) => updateConfig('auto_grading_enabled', e.target.checked.toString())}
+                        />
+                        <Label htmlFor="auto-grade">Enabled</Label>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Confidence Threshold</span>
+                      <Input 
+                        type="number" 
+                        value={aiConfig.confidence_threshold || 75} 
+                        className="w-20"
+                        onChange={(e) => updateConfig('confidence_threshold', e.target.value)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Human Review Required</span>
+                      <div className="flex items-center space-x-2">
+                        <input 
+                          type="checkbox" 
+                          id="human-review" 
+                          checked={aiConfig.human_review_required || false}
+                          onChange={(e) => updateConfig('human_review_required', e.target.checked.toString())}
+                        />
+                        <Label htmlFor="human-review">Enabled</Label>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Real AI Statistics */}
+            <Card>
+              <CardHeader>
+                <CardTitle>AI Performance Statistics</CardTitle>
+                <CardDescription>Real-time AI system performance metrics</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {detectionStatsLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                    <span className="ml-2">Loading statistics...</span>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">{Math.round(detectionAiStats.avgConfidence)}%</div>
+                      <p className="text-sm text-muted-foreground">Avg Confidence</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-600">{detectionAiStats.totalSubmissions}</div>
+                      <p className="text-sm text-muted-foreground">Total Submissions</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-orange-600">{detectionAiStats.plagiarismDetected}</div>
+                      <p className="text-sm text-muted-foreground">Plagiarism Detected</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-purple-600">{detectionAiStats.avgProcessingTime}ms</div>
+                      <p className="text-sm text-muted-foreground">Avg Processing Time</p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+      </div>
+    );
+  };
 
   const renderSystemLogs = () => (
     <div className="space-y-6">
@@ -1937,6 +2138,10 @@ export default function AdminDashboard() {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Course Management</h1>
         <div className="flex items-center space-x-2">
+          <Button variant="outline" size="sm" onClick={() => queryClient.invalidateQueries({ queryKey: ['courses'] })}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
           <Button variant="outline" onClick={() => {/* Handle bulk actions */}}>
             <Download className="mr-2 h-4 w-4" />
             Export
@@ -2098,8 +2303,8 @@ export default function AdminDashboard() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="All Status">All Status</SelectItem>
-            <SelectItem value="Draft">Draft</SelectItem>
-            <SelectItem value="Published">Published</SelectItem>
+            <SelectItem value="Active">Active</SelectItem>
+            <SelectItem value="Inactive">Inactive</SelectItem>
             <SelectItem value="Archived">Archived</SelectItem>
           </SelectContent>
         </Select>
@@ -2126,8 +2331,8 @@ export default function AdminDashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Published</p>
-                <p className="text-2xl font-bold">{courses.filter(c => c.status === 'Published').length}</p>
+                <p className="text-sm font-medium text-muted-foreground">Active</p>
+                <p className="text-2xl font-bold">{courses.filter(c => c.isActive && !c.isArchived).length}</p>
               </div>
               <CheckCircle className="h-8 w-8 text-green-500" />
             </div>
@@ -2137,21 +2342,10 @@ export default function AdminDashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Draft</p>
-                <p className="text-2xl font-bold">{courses.filter(c => c.status === 'Draft').length}</p>
+                <p className="text-sm font-medium text-muted-foreground">Archived</p>
+                <p className="text-2xl font-bold">{courses.filter(c => c.isArchived).length}</p>
               </div>
-              <FileText className="h-8 w-8 text-yellow-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Enrollments</p>
-                <p className="text-2xl font-bold">{courses.reduce((sum, c) => sum + c.enrolledStudents, 0)}</p>
-              </div>
-              <Users className="h-8 w-8 text-blue-500" />
+              <Archive className="h-8 w-8 text-red-500" />
             </div>
           </CardContent>
         </Card>
@@ -2186,17 +2380,16 @@ export default function AdminDashboard() {
                   <TableCell>
                     <Badge 
                       variant={
-                        course.status === 'Published' ? 'default' : 
-                        course.status === 'Draft' ? 'secondary' : 
-                        'outline'
+                        course.isArchived ? 'destructive' :
+                        course.isActive ? 'default' : 'secondary'
                       }
                       className={
-                        course.status === 'Published' ? 'bg-green-500 hover:bg-green-600' :
-                        course.status === 'Draft' ? 'bg-yellow-500 hover:bg-yellow-600' :
-                        ''
+                        course.isArchived ? 'bg-red-500 hover:bg-red-600' :
+                        course.isActive ? 'bg-green-500 hover:bg-green-600' :
+                        'bg-yellow-500 hover:bg-yellow-600'
                       }
                     >
-                      {course.status}
+                      {course.isArchived ? 'Archived' : course.isActive ? 'Active' : 'Inactive'}
                     </Badge>
                   </TableCell>
                   <TableCell>{course.instructor}</TableCell>
@@ -2223,6 +2416,27 @@ export default function AdminDashboard() {
                       >
                         <Edit className="h-4 w-4" />
                       </Button>
+                      {!course.isArchived && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleToggleCourseStatus(course)}
+                          title={`Change Status to ${course.isActive ? 'Inactive' : 'Active'}`}
+                          className={course.isActive ? 'text-green-600 hover:text-green-700' : 'text-yellow-600 hover:text-yellow-700'}
+                        >
+                          {course.isActive ? (
+                            <div className="flex items-center space-x-1">
+                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                              <span className="text-xs">Active</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center space-x-1">
+                              <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                              <span className="text-xs">Inactive</span>
+                            </div>
+                          )}
+                        </Button>
+                      )}
                       <Button 
                         variant="ghost" 
                         size="sm"
@@ -2231,14 +2445,25 @@ export default function AdminDashboard() {
                       >
                         <UserPlus className="h-4 w-4" />
                       </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="sm"
-                        onClick={() => handleArchiveCourse(course)}
-                        title="Archive Course"
-                      >
-                        <Archive className="h-4 w-4" />
-                      </Button>
+                      {!course.isArchived ? (
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleArchiveCourse(course)}
+                          title="Archive Course"
+                        >
+                          <Archive className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => handleUnarchiveCourse(course)}
+                          title="Unarchive Course"
+                        >
+                          <Archive className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button 
                         variant="ghost" 
                         size="sm"
@@ -2342,39 +2567,6 @@ export default function AdminDashboard() {
                     <p className="text-2xl font-bold">{courses.length}</p>
                   </div>
                   <BookOpen className="h-8 w-8 text-muted-foreground" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Total Students</p>
-                    <p className="text-2xl font-bold">{courses.reduce((sum, c) => sum + c.enrolledStudents, 0)}</p>
-                  </div>
-                  <Users className="h-8 w-8 text-muted-foreground" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Avg Completion Rate</p>
-                    <p className="text-2xl font-bold">{Math.round(courseReports.reduce((sum, c) => sum + c.completionRate, 0) / courseReports.length)}%</p>
-                  </div>
-                  <Target className="h-8 w-8 text-muted-foreground" />
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Avg Grade</p>
-                    <p className="text-2xl font-bold">{Math.round(courseReports.reduce((sum, c) => sum + c.averageGrade, 0) / courseReports.length)}%</p>
-                  </div>
-                  <Award className="h-8 w-8 text-muted-foreground" />
                 </div>
               </CardContent>
             </Card>
@@ -2867,141 +3059,98 @@ export default function AdminDashboard() {
   );
 
   const renderSettings = () => (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
-        <p className="text-gray-600 dark:text-gray-300 mt-1">Manage your admin profile and preferences</p>
+    <div className="p-4 max-w-4xl mx-auto h-full overflow-hidden">
+      <div className="mb-4">
+        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
+        <p className="text-sm text-gray-600 dark:text-gray-300">Manage your admin profile and preferences</p>
       </div>
 
-      <div className="space-y-6">
+      <div className="h-full overflow-y-auto">
         {/* Profile Information */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <User className="h-5 w-5 mr-2" />
+        <Card className="h-fit">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center text-lg">
+              <User className="h-4 w-4 mr-2" />
               Profile Information
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-sm">
               Update your personal information and profile picture
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4">
             {/* Profile Picture */}
-            <div className="flex items-center space-x-4">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
+            <div className="flex items-center space-x-3">
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-xl font-bold">
                 {profileSettings.firstName[0]}{profileSettings.lastName[0]}
-              </div>
-              <div>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => {/* Handle photo change */}}
-                >
-                  <Camera className="h-4 w-4 mr-2" />
-                  Change Photo
-                </Button>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  JPG, PNG, max 5MB
-                </p>
               </div>
             </div>
 
             {/* Profile Form */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="firstName">First Name</Label>
+                <Label htmlFor="firstName" className="text-sm">First Name</Label>
                 <Input
                   id="firstName"
                   value={profileSettings.firstName}
                   onChange={(e) => setProfileSettings({...profileSettings, firstName: e.target.value})}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="lastName">Last Name</Label>
+                <Label htmlFor="lastName" className="text-sm">Last Name</Label>
                 <Input
                   id="lastName"
                   value={profileSettings.lastName}
                   onChange={(e) => setProfileSettings({...profileSettings, lastName: e.target.value})}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email" className="text-sm">Email Address</Label>
                 <Input
                   id="email"
                   type="email"
                   value={profileSettings.email}
                   onChange={(e) => setProfileSettings({...profileSettings, email: e.target.value})}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="department">Department</Label>
+                <Label htmlFor="department" className="text-sm">Department</Label>
                 <Input
                   id="department"
                   value={profileSettings.department}
                   onChange={(e) => setProfileSettings({...profileSettings, department: e.target.value})}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="title">Title/Position</Label>
+                <Label htmlFor="title" className="text-sm">Title/Position</Label>
                 <Input
                   id="title"
                   value={profileSettings.title}
                   onChange={(e) => setProfileSettings({...profileSettings, title: e.target.value})}
+                  className="h-8 text-sm"
                 />
               </div>
             </div>
 
             <div>
-              <Label htmlFor="bio">Bio</Label>
+              <Label htmlFor="bio" className="text-sm">Bio</Label>
               <Textarea
                 id="bio"
-                rows={3}
-                className="w-full mt-1"
+                rows={2}
+                className="w-full mt-1 text-sm resize-none"
                 value={profileSettings.bio}
                 onChange={(e) => setProfileSettings({...profileSettings, bio: e.target.value})}
                 placeholder="Tell us a bit about yourself..."
               />
             </div>
 
-            <Button onClick={() => {/* Handle save profile */}}>
-              <Save className="h-4 w-4 mr-2" />
+            <Button onClick={() => {/* Handle save profile */}} className="h-8 text-sm">
+              <Save className="h-3 w-3 mr-1" />
               Save Profile
             </Button>
-          </CardContent>
-        </Card>
-
-
-
-        {/* Account Security */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Shield className="h-5 w-5 mr-2" />
-              Account Security
-            </CardTitle>
-            <CardDescription>
-              Manage your account security settings
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Password</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Last changed 2 months ago</p>
-              </div>
-              <Button variant="outline" onClick={() => {/* Handle change password */}}>
-                Change Password
-              </Button>
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Two-Factor Authentication</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Add an extra layer of security to your account</p>
-              </div>
-              <Button variant="outline" onClick={() => {/* Handle 2FA setup */}}>
-                Enable 2FA
-              </Button>
-            </div>
           </CardContent>
         </Card>
       </div>
@@ -3050,7 +3199,7 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
         
-        <Card>
+        <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setIsAIAnalyticsOpen(true)}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">AI Usage</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -3059,6 +3208,9 @@ export default function AdminDashboard() {
             <div className="text-2xl font-bold" data-testid="text-ai-usage">{systemStats.aiGradingUsage}%</div>
             <p className="text-xs text-muted-foreground">
               Grading efficiency
+            </p>
+            <p className="text-xs text-blue-600 mt-1">
+              Click for detailed analytics
             </p>
           </CardContent>
         </Card>
@@ -3261,6 +3413,16 @@ export default function AdminDashboard() {
               {!isSidebarCollapsed && "Reports"}
             </Button>
             <Button
+              variant={selectedTab === 'llm' ? "default" : "ghost"}
+              className={`w-full ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-start'}`}
+              onClick={() => setSelectedTab('llm')}
+              data-testid="button-tab-llm"
+              title={isSidebarCollapsed ? "LLM Manager" : ""}
+            >
+              <Brain className={`h-4 w-4 ${!isSidebarCollapsed ? 'mr-3' : ''}`} />
+              {!isSidebarCollapsed && "LLM Manager"}
+            </Button>
+            <Button
               variant={selectedTab === 'settings' ? "default" : "ghost"}
               className={`w-full ${isSidebarCollapsed ? 'justify-center px-0' : 'justify-start'}`}
                         onClick={() => setSelectedTab('settings')}
@@ -3301,6 +3463,7 @@ export default function AdminDashboard() {
           {selectedTab === 'programs' && renderProgramManagement()}
             {selectedTab === 'courses' && renderCourseManagement()}
           {selectedTab === 'reports' && renderReports()}
+          {selectedTab === 'llm' && <LLMManager />}
             {selectedTab === 'settings' && renderSettings()}
           </div>
             </main>
@@ -3316,6 +3479,83 @@ export default function AdminDashboard() {
           {notification.message}
         </div>
       )}
+
+      {/* Add Students Modal */}
+      <Dialog open={isAddStudentModalOpen} onOpenChange={setIsAddStudentModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Add Students to {selectedCourse?.title}</DialogTitle>
+            <DialogDescription>
+              Select students to enroll in this course.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {studentsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="ml-2">Loading available students...</span>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="max-h-64 overflow-y-auto border rounded-lg">
+                {allStudents.length === 0 ? (
+                  <div className="p-4 text-center text-muted-foreground">
+                    No available students to add to this course.
+                  </div>
+                ) : (
+                  <div className="space-y-2 p-2">
+                    {allStudents.map((student) => (
+                      <div key={student.id} className="flex items-center space-x-3 p-2 hover:bg-muted rounded">
+                        <input
+                          type="checkbox"
+                          id={student.id}
+                          checked={selectedStudents.includes(student.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedStudents([...selectedStudents, student.id]);
+                            } else {
+                              setSelectedStudents(selectedStudents.filter(id => id !== student.id));
+                            }
+                          }}
+                          className="rounded"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium">{student.firstName} {student.lastName}</div>
+                          <div className="text-sm text-muted-foreground">{student.email}</div>
+                          {student.studentId && (
+                            <div className="text-xs text-muted-foreground">ID: {student.studentId}</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              
+              {selectedStudents.length > 0 && (
+                <div className="text-sm text-muted-foreground">
+                  {selectedStudents.length} student(s) selected
+                </div>
+              )}
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setIsAddStudentModalOpen(false);
+              setSelectedStudents([]);
+            }}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleAddStudentsToCourse}
+              disabled={selectedStudents.length === 0}
+            >
+              Add {selectedStudents.length} Student(s)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add User Modal */}
       <Dialog open={isAddUserModalOpen} onOpenChange={(open) => {
@@ -3696,7 +3936,17 @@ export default function AdminDashboard() {
           <div className="space-y-6">
             <div className="grid grid-cols-2 gap-6">
               <div>
-                <h3 className="font-medium mb-3">Enrolled Students ({enrolledStudents.length})</h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-medium">Enrolled Students ({enrolledStudents.length})</h3>
+                  <Button 
+                    size="sm" 
+                    onClick={() => setIsAddStudentModalOpen(true)}
+                    className="h-8"
+                  >
+                    <UserPlus className="h-3 w-3 mr-1" />
+                    Add Students
+                  </Button>
+                </div>
                 <div className="border rounded-lg p-4 max-h-64 overflow-y-auto">
                   {enrolledStudentsLoading ? (
                     <div className="flex items-center justify-center py-4">
@@ -4019,6 +4269,145 @@ export default function AdminDashboard() {
             </Button>
             <Button onClick={handleSaveProgram}>
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* AI Analytics Modal */}
+      <Dialog open={isAIAnalyticsOpen} onOpenChange={setIsAIAnalyticsOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5" />
+              AI Analytics Dashboard
+            </DialogTitle>
+            <DialogDescription>
+              Comprehensive AI usage statistics and performance metrics
+            </DialogDescription>
+          </DialogHeader>
+          
+          {aiAnalyticsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="ml-2">Loading AI analytics...</span>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* AI Usage Overview */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium">Total Submissions</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{aiAnalytics.totalSubmissions}</div>
+                    <p className="text-xs text-muted-foreground">All time submissions</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium">AI Graded</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-green-600">{aiAnalytics.aiGradedSubmissions}</div>
+                    <p className="text-xs text-muted-foreground">Automatically graded</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium">AI Usage</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-blue-600">{Math.round(aiAnalytics.aiUsagePercentage)}%</div>
+                    <p className="text-xs text-muted-foreground">Efficiency rate</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium">Avg Confidence</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-purple-600">{aiAnalytics.avgConfidence}%</div>
+                    <p className="text-xs text-muted-foreground">AI accuracy</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Performance Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Performance Metrics</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium">Average Processing Time</span>
+                      <span className="text-sm text-muted-foreground">{aiAnalytics.avgProcessingTime}ms</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium">Plagiarism Detected</span>
+                      <span className="text-sm text-muted-foreground">{aiAnalytics.plagiarismDetected} cases</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-medium">AI System Status</span>
+                      <Badge variant="default" className="bg-green-600">Active</Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">AI Features</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <span className="text-sm">Automatic Grading</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <span className="text-sm">Plagiarism Detection</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <span className="text-sm">Content Analysis</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <span className="text-sm">Feedback Generation</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Cost Information */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Cost Analysis</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Total AI Processing Cost</p>
+                      <p className="text-xs text-muted-foreground">Since system deployment</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-green-600">$0.00</p>
+                      <p className="text-xs text-muted-foreground">100% Free AI System</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAIAnalyticsOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

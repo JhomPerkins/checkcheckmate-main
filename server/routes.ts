@@ -4,10 +4,15 @@ import { storage } from "./storage";
 import { insertAnnouncementSchema, insertMaterialSchema, insertSubmissionSchema } from "@shared/schema";
 import { AuthService } from "./auth";
 import { processSubmissionWithAI, getPlagiarismReport, getAIGrade } from "./ai";
+import { checkmateAI, AIGradingResult, PlagiarismResult } from "./ai-integration";
+import llmRoutes from "./llm/llm-routes.js";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // put application routes here
   // prefix all routes with /api
+
+  // LLM Routes
+  app.use('/api/llm', llmRoutes);
 
   // use storage to perform CRUD operations on the storage interface
   // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
@@ -111,6 +116,109 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting material:", error);
       res.status(500).json({ error: "Failed to delete material" });
+    }
+  });
+
+  // DIRECT AI INTEGRATION ROUTES (Native CHECKmate AI)
+  app.post("/api/ai/grade-submission", async (req, res) => {
+    try {
+      const { content, student_id, assignment_id, rubric } = req.body;
+      
+      if (!content || !student_id || !assignment_id || !rubric) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      console.log(`🤖 Direct AI grading for student ${student_id}`);
+      
+      const result = await checkmateAI.gradeSubmission(
+        content,
+        rubric,
+        assignment_id,
+        student_id
+      );
+
+      res.json({
+        success: true,
+        total_score: result.total_score,
+        criteria_scores: result.rubric_scores,
+        feedback: result.feedback,
+        content_analysis: result.content_analysis,
+        confidence: result.confidence,
+        grading_method: result.grading_method,
+        metadata: {
+          processing_time: 0.5, // Native processing is very fast
+          cost: "$0.00",
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error("Direct AI grading error:", error);
+      res.status(500).json({ error: 'Direct AI grading failed' });
+    }
+  });
+
+  app.post("/api/ai/detect-plagiarism", async (req, res) => {
+    try {
+      const { content, assignment_id, student_id } = req.body;
+      
+      if (!content || !assignment_id || !student_id) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+
+      console.log(`🔍 Direct AI plagiarism detection for student ${student_id}`);
+      
+      const result = await checkmateAI.detectPlagiarism(
+        content,
+        assignment_id,
+        student_id
+      );
+
+      res.json({
+        similarity_scores: result.similarity_scores,
+        matches: result.matches,
+        highest_similarity: result.highest_similarity,
+        is_flagged: result.is_flagged,
+        ai_detection: result.ai_detection,
+        detection_method: result.detection_method,
+        metadata: {
+          processing_time: 0.3,
+          cost: "$0.00",
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error("Direct AI plagiarism detection error:", error);
+      res.status(500).json({ error: 'Direct AI plagiarism detection failed' });
+    }
+  });
+
+  app.get("/api/ai/analyze-content", async (req, res) => {
+    try {
+      const { content } = req.query;
+      
+      if (!content) {
+        return res.status(400).json({ error: "Content parameter is required" });
+      }
+
+      console.log("📊 Direct AI content analysis");
+      
+      const analysis = checkmateAI.analyzeContent(content as string);
+      
+      res.json({
+        content_analysis: analysis,
+        processing_method: "checkmate_ai_direct",
+        metadata: {
+          processing_time: 0.1,
+          cost: "$0.00",
+          timestamp: new Date().toISOString()
+        }
+      });
+
+    } catch (error) {
+      console.error("Direct AI content analysis error:", error);
+      res.status(500).json({ error: 'Direct AI content analysis failed' });
     }
   });
 
@@ -376,7 +484,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await AuthService.register(userData);
       
       if (result.success) {
-        const message = userData.role === 'student' 
+        const message = (userData as any).role === 'student' 
           ? "Registration successful! Your account is pending approval. You will be notified once an administrator approves your account."
           : "Registration successful";
         
@@ -641,6 +749,55 @@ app.get("/api/admin/stats", async (req, res) => {
   } catch (error) {
     console.error("Error fetching admin statistics:", error);
     res.status(500).json({ error: "Failed to fetch admin statistics" });
+  }
+});
+
+// AI Analytics endpoint
+app.get("/api/admin/ai-analytics", async (req, res) => {
+  try {
+    const aiStats = await storage.getAIStatistics();
+    res.json(aiStats);
+  } catch (error) {
+    console.error("Error fetching AI analytics:", error);
+    res.status(500).json({ error: "Failed to fetch AI analytics" });
+  }
+});
+
+// AI Configuration endpoints
+app.get("/api/admin/ai-config", async (req, res) => {
+  try {
+    const config = await storage.getAIConfig();
+    res.json(config);
+  } catch (error) {
+    console.error("Error fetching AI config:", error);
+    res.status(500).json({ error: "Failed to fetch AI configuration" });
+  }
+});
+
+app.put("/api/admin/ai-config/:key", async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { value } = req.body;
+    
+    if (!value) {
+      return res.status(400).json({ error: "Value is required" });
+    }
+    
+    await storage.updateAIConfig(key, value);
+    res.json({ success: true, message: "Configuration updated successfully" });
+  } catch (error) {
+    console.error("Error updating AI config:", error);
+    res.status(500).json({ error: "Failed to update AI configuration" });
+  }
+});
+
+app.post("/api/admin/ai-config/reset", async (req, res) => {
+  try {
+    await storage.resetAIConfigToDefaults();
+    res.json({ success: true, message: "AI configuration reset to defaults" });
+  } catch (error) {
+    console.error("Error resetting AI config:", error);
+    res.status(500).json({ error: "Failed to reset AI configuration" });
   }
 });
 
@@ -910,6 +1067,91 @@ app.get("/api/users", async (req, res) => {
       timestamp: new Date().toISOString(),
       database: "connected"
     });
+  });
+
+  // Enrollment creation endpoint
+  app.post("/api/enrollments", async (req, res) => {
+    try {
+      const { courseId, studentId } = req.body;
+      
+      if (!courseId || !studentId) {
+        return res.status(400).json({ error: "Course ID and Student ID are required" });
+      }
+      
+      const enrollment = await storage.createEnrollment(courseId, studentId);
+      res.status(201).json(enrollment);
+    } catch (error) {
+      console.error("Error creating enrollment:", error);
+      res.status(500).json({ error: "Failed to create enrollment" });
+    }
+  });
+
+  // Get available students (not enrolled in a specific course)
+  app.get("/api/students/available", async (req, res) => {
+    try {
+      const { courseId } = req.query;
+      
+      if (!courseId) {
+        return res.status(400).json({ error: "Course ID is required" });
+      }
+      
+      const availableStudents = await storage.getAvailableStudents(courseId as string);
+      res.json(availableStudents);
+    } catch (error) {
+      console.error("Error fetching available students:", error);
+      res.status(500).json({ error: "Failed to fetch available students" });
+    }
+  });
+
+  // Archive course
+  app.put("/api/courses/:id/archive", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.archiveCourse(id);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+      
+      res.json({ message: "Course archived successfully" });
+    } catch (error) {
+      console.error("Error archiving course:", error);
+      res.status(500).json({ error: "Failed to archive course" });
+    }
+  });
+
+  // Unarchive course
+  app.put("/api/courses/:id/unarchive", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.unarchiveCourse(id);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+      
+      res.json({ message: "Course unarchived successfully" });
+    } catch (error) {
+      console.error("Error unarchiving course:", error);
+      res.status(500).json({ error: "Failed to unarchive course" });
+    }
+  });
+
+  // Toggle course status (Active/Inactive)
+  app.put("/api/courses/:id/toggle-status", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.toggleCourseStatus(id);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Course not found" });
+      }
+      
+      res.json({ message: "Course status updated successfully" });
+    } catch (error) {
+      console.error("Error toggling course status:", error);
+      res.status(500).json({ error: "Failed to update course status" });
+    }
   });
 
   const httpServer = createServer(app);

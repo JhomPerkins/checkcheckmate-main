@@ -6,6 +6,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
+import { type Course as SchemaCourse } from "@shared/schema";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,12 +33,7 @@ const apiGet = async (url: string): Promise<any> => {
 };
 
 // Type definitions
-interface Course {
-  id: string;
-  title: string;
-  code: string;
-  isActive?: boolean;
-}
+// Using SchemaCourse from shared schema instead of local interface
 
 interface Submission {
   id: string;
@@ -73,8 +69,8 @@ interface Assignment {
   dueDate: string;
   maxScore: number;
   isPublished: boolean;
-  submissionsCount: number;
-  gradedCount: number;
+  submissionsCount?: number;
+  gradedCount?: number;
   createdAt: string;
 }
 
@@ -262,27 +258,24 @@ export default function InstructorDashboard() {
   // Update assignment mutation
   const updateAssignmentMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: AssignmentFormData }) => {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return { id, data };
+      const response = await fetch(`/api/assignments/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update assignment');
+      }
+      
+      return response.json();
     },
-    onSuccess: ({ id, data }) => {
-      const course = courses.find(c => c.id === data.courseId);
-      setAssignments(prev => prev.map(assignment => 
-        assignment.id === id 
-          ? {
-              ...assignment,
-              title: data.title,
-              courseCode: course?.code || assignment.courseCode,
-              courseTitle: course?.title || assignment.courseTitle,
-              courseId: data.courseId,
-              description: data.description,
-              dueDate: data.dueDate,
-              maxScore: data.maxScore,
-              isPublished: data.isPublished,
-            }
-          : assignment
-      ));
+    onSuccess: (assignment) => {
+      // Invalidate and refetch assignments to get the latest data
+      queryClient.invalidateQueries({ queryKey: ['/api/assignments/instructor', user?.id] });
+      
       assignmentForm.reset();
       setIsEditDialogOpen(false);
       setEditingAssignment(null);
@@ -303,12 +296,20 @@ export default function InstructorDashboard() {
   // Delete assignment mutation
   const deleteAssignmentMutation = useMutation({
     mutationFn: async (id: string) => {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await fetch(`/api/assignments/${id}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete assignment');
+      }
+      
       return id;
     },
     onSuccess: (id) => {
-      setAssignments(prev => prev.filter(assignment => assignment.id !== id));
+      // Invalidate and refetch assignments to get the latest data
+      queryClient.invalidateQueries({ queryKey: ['/api/assignments/instructor', user?.id] });
+      
       toast({
         title: "Assignment Deleted",
         description: "Assignment has been deleted successfully.",
@@ -402,39 +403,65 @@ export default function InstructorDashboard() {
     setIsGradingModalOpen(true);
   };
 
-  const handleAutomaticGrading = (submission: any) => {
+  const handleAutomaticGrading = async (submission: any) => {
     setSelectedSubmission(submission);
     
-    // Simulate AI grading process
     toast({
       title: "Automatic Grading Started",
       description: `Running AI grading for ${submission.assignmentTitle}...`,
     });
 
-    // Simulate processing time
-    setTimeout(() => {
-      const mockGrade = Math.floor(Math.random() * 30) + 70; // 70-100
-      const mockFeedback = `AI Analysis: The essay demonstrates ${mockGrade >= 85 ? 'strong' : 'adequate'} understanding of the topic. ${mockGrade >= 90 ? 'Excellent structure and argumentation.' : 'Good points made with room for improvement in organization.'}`;
+    try {
+      // Call the real AI grading API
+      const response = await fetch('/api/ai/grade-submission', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: submission.content,
+          student_id: submission.studentId,
+          assignment_id: submission.assignmentId,
+          rubric: {
+            content: 40,
+            structure: 30,
+            grammar: 30
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to grade submission');
+      }
+
+      const result = await response.json();
       
       setAutoGradingResults({
-        score: mockGrade,
-        feedback: mockFeedback,
-        criteria: {
-          content: Math.floor(Math.random() * 20) + 80,
-          structure: Math.floor(Math.random() * 20) + 80,
-          grammar: Math.floor(Math.random() * 20) + 80,
-          originality: Math.floor(Math.random() * 20) + 80
-        }
+        score: result.total_score,
+        feedback: result.feedback,
+        criteria: result.criteria_scores,
+        confidence: result.confidence,
+        processingTime: result.metadata.processing_time
       });
+      
+      // Invalidate submissions to refresh the data
+      queryClient.invalidateQueries({ queryKey: ['/api/submissions/recent', user?.id] });
       
       toast({
         title: "Automatic Grading Complete",
-        description: `AI grade: ${mockGrade}% - Ready for review`,
+        description: `AI grade: ${result.total_score}% - Confidence: ${Math.round(result.confidence * 100)}%`,
       });
-    }, 2000);
+    } catch (error) {
+      console.error('AI grading error:', error);
+      toast({
+        title: "Grading Failed",
+        description: "Failed to grade submission with AI. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleCheckPlagiarism = (submission: any) => {
+  const handleCheckPlagiarism = async (submission: any) => {
     setSelectedSubmission(submission);
     
     toast({
@@ -442,25 +469,49 @@ export default function InstructorDashboard() {
       description: `Scanning ${submission.assignmentTitle} for plagiarism...`,
     });
 
-    // Simulate plagiarism check
-    setTimeout(() => {
-      const plagiarismScore = Math.floor(Math.random() * 15); // 0-15%
+    try {
+      // Call the real AI plagiarism detection API
+      const response = await fetch('/api/llm/detect-plagiarism', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          submissionText: submission.content,
+          referenceTexts: [] // For now, we'll use internal similarity detection
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to check plagiarism');
+      }
+
+      const result = await response.json();
+      
       setPlagiarismResults({
-        score: plagiarismScore,
-        status: plagiarismScore < 5 ? 'Low Risk' : plagiarismScore < 10 ? 'Medium Risk' : 'High Risk',
-        sources: plagiarismScore > 0 ? [
-          { url: 'https://example.com/source1', similarity: Math.floor(Math.random() * 10) + 1 },
-          { url: 'https://example.com/source2', similarity: Math.floor(Math.random() * 8) + 1 }
-        ].slice(0, plagiarismScore > 5 ? 2 : 1) : []
+        score: result.similarityPercentage,
+        status: result.similarityPercentage < 20 ? 'Low Risk' : 
+                result.similarityPercentage < 50 ? 'Medium Risk' : 'High Risk',
+        sources: result.detectedSources || [],
+        analysis: result.analysis,
+        confidence: result.confidence,
+        processingTime: result.processingTime
       });
       
       setIsPlagiarismModalOpen(true);
       
       toast({
         title: "Plagiarism Check Complete",
-        description: `Similarity: ${plagiarismScore}% - ${plagiarismScore < 5 ? 'Low Risk' : plagiarismScore < 10 ? 'Medium Risk' : 'High Risk'}`,
+        description: `Similarity: ${result.similarityPercentage}% - Confidence: ${result.confidence}%`,
       });
-    }, 1500);
+    } catch (error) {
+      console.error('Plagiarism check error:', error);
+      toast({
+        title: "Plagiarism Check Failed",
+        description: "Failed to check plagiarism. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleReviewSubmission = (submission: any) => {
@@ -670,7 +721,7 @@ export default function InstructorDashboard() {
   };
 
   // Fetch instructor's courses
-  const { data: teachingCourses = [], isLoading: coursesLoading } = useQuery<Course[]>({
+  const { data: teachingCourses = [], isLoading: coursesLoading } = useQuery<SchemaCourse[]>({
     queryKey: ['/api/courses/instructor', user?.id],
     queryFn: () => apiGet(`/api/courses/instructor/${user?.id}`),
     enabled: !!user?.id,
@@ -839,7 +890,7 @@ export default function InstructorDashboard() {
                           <SelectContent>
                             {courses.map((course) => (
                               <SelectItem key={course.id} value={course.id}>
-                                {course.code} - Section {course.section} - {course.title}
+                                {course.code} - Section {course.section || 'A'} - {course.title}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -937,7 +988,7 @@ export default function InstructorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {assignments.reduce((sum, a) => sum + a.submissionsCount, 0)}
+                {assignments.reduce((sum, a) => sum + (a.submissionsCount || 0), 0)}
               </div>
               <p className="text-xs text-muted-foreground">
                 Across all assignments
@@ -952,7 +1003,7 @@ export default function InstructorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {assignments.reduce((sum, a) => sum + (a.submissionsCount - a.gradedCount), 0)}
+                {assignments.reduce((sum, a) => sum + ((a.submissionsCount || 0) - (a.gradedCount || 0)), 0)}
               </div>
               <p className="text-xs text-muted-foreground">
                 Awaiting review
@@ -1026,7 +1077,7 @@ export default function InstructorDashboard() {
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {assignment.courseCode || 'N/A'} - Section {courses.find(c => c.id === assignment.courseId)?.section || 'Unknown'} • {assignment.courseTitle || 'N/A'}
+                        {assignment.courseCode || 'N/A'} - Section {courses.find(c => c.id === assignment.courseId)?.section || 'A'} • {assignment.courseTitle || 'N/A'}
                       </p>
                       <p className="text-sm">{assignment.description}</p>
                       
@@ -1041,7 +1092,7 @@ export default function InstructorDashboard() {
                         </div>
                         <div className="flex items-center gap-1">
                           <Users className="h-4 w-4" />
-                          <span>Submissions: {assignment.submissionsCount}</span>
+                          <span>Submissions: {assignment.submissionsCount || 0}</span>
                         </div>
                       </div>
                     </div>
@@ -1406,7 +1457,7 @@ export default function InstructorDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold" data-testid="text-active-courses">
-              {teachingCourses.filter((course: Course) => course.isActive).length}
+              {teachingCourses.filter((course: SchemaCourse) => course.isActive).length}
             </div>
           </CardContent>
         </Card>
@@ -1500,7 +1551,7 @@ export default function InstructorDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {teachingCourses.map((course: Course) => {
+              {teachingCourses.map((course: SchemaCourse) => {
                 const stats = courseStats[course.id] || { students: 0, assignments: 0, pendingGrades: 0 };
                 return (
                   <div key={course.id} className="p-3 border rounded-lg">

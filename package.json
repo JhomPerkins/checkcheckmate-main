@@ -14,9 +14,13 @@
     "setup:neon": "node scripts/setup-neon.js",
     "ai:setup": "cd python_ai_backend && python -m venv venv && venv\\Scripts\\activate && pip install -r requirements.txt",
     "ai:start": "cd python_ai_backend && venv\\Scripts\\activate && python main.py",
-    "dev:full": "concurrently \"npm run ai:start\" \"npm run dev\""
+    "dev:full": "concurrently \"npm run ai:start\" \"npm run dev\"",
+    "free-llm:setup": "cd python_ai_backend && python setup_free_llm.py",
+    "free-llm:start": "cd python_ai_backend && free_llm_env\\Scripts\\activate && python main.py",
+    "dev:free": "concurrently \"npm run free-llm:start\" \"npm run dev\""
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@neondatabase/serverless": "^0.10.4",

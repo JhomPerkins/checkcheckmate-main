@@ -1,6 +1,6 @@
 import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, unique } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
+import { createInsertSchema, createUpdateSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Programs table
@@ -58,6 +58,8 @@ export const courses = pgTable("courses", {
   instructorId: varchar("instructor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   programId: varchar("program_id").notNull().references(() => programs.id, { onDelete: "cascade" }), // Course must belong to a program
   isActive: boolean("is_active").default(true),
+  isArchived: boolean("is_archived").default(false),
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
@@ -84,6 +86,9 @@ export const assignments = pgTable("assignments", {
   dueDate: timestamp("due_date"),
   isPublished: boolean("is_published").default(false),
   rubric: jsonb("rubric"), // JSON object for grading criteria
+  // AI tracking fields
+  aiGradingEnabled: boolean("ai_grading_enabled").default(true),
+  aiGradingCount: integer("ai_grading_count").default(0),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -99,6 +104,11 @@ export const submissions = pgTable("submissions", {
   status: text("status").$type<'draft' | 'submitted' | 'graded'>().default('draft'),
   embedding: jsonb("embedding"), // AI embedding for plagiarism detection
   submittedAt: timestamp("submitted_at"),
+  // AI tracking fields
+  aiGraded: boolean("ai_graded").default(false),
+  aiConfidence: text("ai_confidence"), // DECIMAL as text for Drizzle compatibility
+  aiProcessingTime: integer("ai_processing_time"), // in milliseconds
+  aiGradedAt: timestamp("ai_graded_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -154,6 +164,31 @@ export const plagiarismReports = pgTable("plagiarism_reports", {
   highestSimilarity: integer("highest_similarity").notNull(), // Highest similarity percentage
   isFlagged: boolean("is_flagged").default(false), // Whether to flag for review
   createdAt: timestamp("created_at").defaultNow(),
+});
+
+// AI Statistics tracking table
+export const aiStatistics = pgTable("ai_statistics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  date: timestamp("date").defaultNow(),
+  totalSubmissions: integer("total_submissions").default(0),
+  aiGradedSubmissions: integer("ai_graded_submissions").default(0),
+  avgConfidence: text("avg_confidence"), // DECIMAL as text
+  avgProcessingTime: integer("avg_processing_time").default(0),
+  plagiarismDetected: integer("plagiarism_detected").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// AI Configuration table
+export const aiConfig = pgTable("ai_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: varchar("key").notNull().unique(),
+  value: text("value").notNull(),
+  description: text("description"),
+  category: varchar("category").notNull(), // 'plagiarism', 'grading', 'general'
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Relations
@@ -304,6 +339,18 @@ export const insertCourseSchema = createInsertSchema(courses).pick({
   section: true,
   instructorId: true,
   programId: true,
+});
+
+export const updateCourseSchema = createUpdateSchema(courses).pick({
+  title: true,
+  description: true,
+  code: true,
+  section: true,
+  instructorId: true,
+  programId: true,
+  isActive: true,
+  isArchived: true,
+  archivedAt: true,
 });
 
 export const insertAssignmentSchema = createInsertSchema(assignments).pick({

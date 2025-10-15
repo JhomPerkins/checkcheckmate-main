@@ -512,28 +512,28 @@ export default function StudentDashboard() {
 
 
   const renderSettings = () => (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
-        <p className="text-gray-600 dark:text-gray-300 mt-1">Manage your profile and preferences</p>
+    <div className="p-4 max-w-4xl mx-auto h-full overflow-hidden">
+      <div className="mb-4">
+        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
+        <p className="text-sm text-gray-600 dark:text-gray-300">Manage your profile and preferences</p>
       </div>
 
-      <div className="space-y-6">
+      <div className="h-full overflow-y-auto">
         {/* Profile Information */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <User className="h-5 w-5 mr-2" />
+        <Card className="h-fit">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center text-lg">
+              <User className="h-4 w-4 mr-2" />
               Profile Information
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-sm">
               Update your personal information and profile picture
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4">
             {/* Profile Picture */}
-            <div className="flex items-center space-x-4">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
+            <div className="flex items-center space-x-3">
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-xl font-bold">
                 {user ? `${user.firstName[0]}${user.lastName[0]}` : 'U'}
               </div>
               <div>
@@ -541,8 +541,9 @@ export default function StudentDashboard() {
                   variant="outline" 
                   size="sm" 
                   onClick={() => {/* Handle photo change */}}
+                  className="text-xs"
                 >
-                  <Camera className="h-4 w-4 mr-2" />
+                  <Camera className="h-3 w-3 mr-1" />
                   Change Photo
                 </Button>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
@@ -552,92 +553,71 @@ export default function StudentDashboard() {
             </div>
 
             {/* Profile Form */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <Label htmlFor="firstName">First Name</Label>
+                <Label htmlFor="firstName" className="text-sm">First Name</Label>
                 <Input
                   id="firstName"
                   value={user?.firstName || ''}
                   onChange={(e) => {/* Handle change */}}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="lastName">Last Name</Label>
+                <Label htmlFor="lastName" className="text-sm">Last Name</Label>
                 <Input
                   id="lastName"
                   value={user?.lastName || ''}
                   onChange={(e) => {/* Handle change */}}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email" className="text-sm">Email Address</Label>
                 <Input
                   id="email"
                   type="email"
                   value={user?.email || ''}
                   onChange={(e) => {/* Handle change */}}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="studentId">Student ID</Label>
+                <Label htmlFor="studentId" className="text-sm">Student ID</Label>
                 <Input
                   id="studentId"
                   value={user?.studentId || ''}
                   onChange={(e) => {/* Handle change */}}
+                  className="h-8 text-sm"
                 />
               </div>
               <div>
-                <Label htmlFor="major">Major</Label>
+                <Label htmlFor="major" className="text-sm">Major</Label>
                 <Input
                   id="major"
                   value="Computer Science"
                   onChange={(e) => {/* Handle change */}}
+                  className="h-8 text-sm"
                 />
               </div>
             </div>
 
             <div>
-              <Label htmlFor="bio">Bio</Label>
+              <Label htmlFor="bio" className="text-sm">Bio</Label>
               <textarea
                 id="bio"
-                rows={3}
-                className="w-full mt-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-600"
+                rows={2}
+                className="w-full mt-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-600 text-sm resize-none"
                 value="Passionate computer science student with interests in web development and machine learning."
                 onChange={(e) => {/* Handle change */}}
                 placeholder="Tell us a bit about yourself..."
               />
             </div>
 
-            <Button onClick={() => {/* Handle save profile */}}>
-              <Save className="h-4 w-4 mr-2" />
+            <Button onClick={() => {/* Handle save profile */}} className="h-8 text-sm">
+              <Save className="h-3 w-3 mr-1" />
               Save Profile
             </Button>
-          </CardContent>
-        </Card>
-
-
-
-        {/* Account Security */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Shield className="h-5 w-5 mr-2" />
-              Account Security
-            </CardTitle>
-            <CardDescription>
-              Manage your account security settings
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Password</Label>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Last changed 2 months ago</p>
-              </div>
-              <Button variant="outline" onClick={() => {/* Handle change password */}}>
-                Change Password
-              </Button>
-            </div>
           </CardContent>
         </Card>
       </div>
